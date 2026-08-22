@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -16,7 +17,7 @@ func TestRemoteFetchCapabilitiesCached(t *testing.T) {
 		}
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"managed","clientCrud":true,"clientEnable":true,"perClientTraffic":true}}`))
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"managed","trafficSource":"sing-box-v2ray-api","clientCrud":true,"clientEnable":true,"perClientTraffic":true}}`))
 	}))
 	defer server.Close()
 
@@ -37,15 +38,15 @@ func TestRemoteFetchCapabilitiesCached(t *testing.T) {
 	}
 }
 
-func TestRemoteManagedSingboxTrafficRequiresFullCapabilitySet(t *testing.T) {
+func TestRemoteManagedSingboxTrafficRejectsNonSingboxSource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"traffic-readonly","clientCrud":false,"clientEnable":false,"perClientTraffic":true}}`))
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"managed","trafficSource":"xray-api","clientCrud":true,"clientEnable":true,"perClientTraffic":true}}`))
 	}))
 	defer server.Close()
 
 	r := NewRemote(nodeForPlainServer(t, server, "verify", "tok"), nil)
-	if _, err := r.FetchManagedSingboxTrafficSnapshot(context.Background()); err == nil {
-		t.Fatal("traffic-readonly node accepted as managed")
+	if _, err := r.FetchManagedSingboxTrafficSnapshot(context.Background()); !errors.Is(err, ErrManagedSingboxTrafficUnsupported) {
+		t.Fatalf("error=%v, want ErrManagedSingboxTrafficUnsupported", err)
 	}
 }

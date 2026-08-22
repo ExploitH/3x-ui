@@ -76,6 +76,7 @@ type ReadOnlyInbound struct {
 
 type ReadOnlyCapabilities struct {
 	Mode             string `json:"mode"`
+	TrafficSource    string `json:"trafficSource,omitempty"`
 	Config           bool   `json:"config"`
 	InboundInventory bool   `json:"inboundInventory"`
 	ClientCrud       bool   `json:"clientCrud"`
@@ -274,6 +275,7 @@ func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
 	if h.stats != nil {
 		if _, err := buildTrafficPlan(cfg); err == nil {
 			caps.Mode = "traffic-readonly"
+			caps.TrafficSource = "sing-box-v2ray-api"
 			caps.PerClientTraffic = true
 		}
 	}

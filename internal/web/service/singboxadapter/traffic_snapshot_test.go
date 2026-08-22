@@ -44,7 +44,7 @@ func TestReadOnlyHandlerReportsTrafficSnapshotWithoutReset(t *testing.T) {
 	capReq.Header.Set("Authorization", "Bearer adapter-test-token")
 	capResp := httptest.NewRecorder()
 	h.ServeHTTP(capResp, capReq)
-	if capResp.Code != http.StatusOK || !containsAll(capResp.Body.String(), `"mode":"traffic-readonly"`, `"perClientTraffic":true`, `"clientCrud":false`, `"clientEnable":false`) {
+	if capResp.Code != http.StatusOK || !containsAll(capResp.Body.String(), `"mode":"traffic-readonly"`, `"trafficSource":"sing-box-v2ray-api"`, `"perClientTraffic":true`, `"clientCrud":false`, `"clientEnable":false`) {
 		t.Fatalf("capabilities=%d body=%s", capResp.Code, capResp.Body.String())
 	}
 

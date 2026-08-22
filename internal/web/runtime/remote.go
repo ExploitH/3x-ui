@@ -722,6 +722,7 @@ func (r *Remote) ResetInboundTraffic(ctx context.Context, ib *model.Inbound) err
 
 type NodeCapabilities struct {
 	Mode             string `json:"mode"`
+	TrafficSource    string `json:"trafficSource"`
 	Config           bool   `json:"config"`
 	InboundInventory bool   `json:"inboundInventory"`
 	ClientCrud       bool   `json:"clientCrud"`
@@ -781,7 +782,7 @@ func (r *Remote) FetchManagedSingboxTrafficSnapshot(ctx context.Context) (*Singb
 	if err != nil {
 		return nil, err
 	}
-	if caps == nil || !caps.ClientCrud || !caps.ClientEnable || !caps.PerClientTraffic {
+	if caps == nil || caps.TrafficSource != singboxTrafficSource || !caps.ClientCrud || !caps.ClientEnable || !caps.PerClientTraffic {
 		return nil, ErrManagedSingboxTrafficUnsupported
 	}
 	return r.FetchSingboxTrafficSnapshot(ctx)
