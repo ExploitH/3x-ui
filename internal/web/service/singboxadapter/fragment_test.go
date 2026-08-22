@@ -7,13 +7,15 @@ import (
 
 func TestBuildManagedRelayFragmentCreatesPerUserInboundAndExitOutbounds(t *testing.T) {
 	fragment, err := BuildManagedRelayFragment(RelayFragmentInput{
-		InboundTag: "managed-relay-hk1",
-		ListenPort: 29001,
+		InboundTag:      "managed-relay-hk1",
+		ListenPort:      29001,
+		CertificatePath: "/etc/sing-box/cert.pem",
+		KeyPath:         "/etc/sing-box/key.pem",
 		Users: []ManagedRelayUser{
-			{Email: "alice@example.com", UUID: "alice-uuid", ExitTag: "exit-us2"},
-			{Email: "bob@example.com", UUID: "bob-uuid", ExitTag: "exit-us2"},
+			{Email: "alice@example.com", Password: "alice-uuid", ExitTag: "exit-us2"},
+			{Email: "bob@example.com", Password: "bob-uuid", ExitTag: "exit-us2"},
 		},
-		Exits: []ManagedRelayExit{{Tag: "exit-us2", Server: "us2.example", ServerPort: 443}},
+		Exits: []ManagedRelayExit{{Tag: "exit-us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}},
 	})
 	if err != nil {
 		t.Fatalf("BuildManagedRelayFragment: %v", err)
@@ -37,9 +39,9 @@ func TestBuildManagedRelayFragmentCreatesPerUserInboundAndExitOutbounds(t *testi
 
 func TestBuildManagedRelayFragmentRejectsDuplicateUsersAndInvalidExit(t *testing.T) {
 	cases := []RelayFragmentInput{
-		{InboundTag: "x", ListenPort: 1, Users: []ManagedRelayUser{{Email: "a", UUID: "same", ExitTag: "missing"}}},
-		{InboundTag: "x", ListenPort: 1, Users: []ManagedRelayUser{{Email: "a", UUID: "same", ExitTag: "e"}, {Email: "a", UUID: "other", ExitTag: "e"}}, Exits: []ManagedRelayExit{{Tag: "e", Server: "x", ServerPort: 1}}},
-		{InboundTag: "x", ListenPort: 1, Users: []ManagedRelayUser{{Email: "a", UUID: "same", ExitTag: "e"}, {Email: "b", UUID: "same", ExitTag: "e"}}, Exits: []ManagedRelayExit{{Tag: "e", Server: "x", ServerPort: 1}}},
+		{InboundTag: "x", ListenPort: 1, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem", Users: []ManagedRelayUser{{Email: "a", Password: "same", ExitTag: "missing"}}},
+		{InboundTag: "x", ListenPort: 1, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem", Users: []ManagedRelayUser{{Email: "a", Password: "same", ExitTag: "e"}, {Email: "a", Password: "other", ExitTag: "e"}}, Exits: []ManagedRelayExit{{Tag: "e", Server: "x", ServerPort: 1, Password: "exit-secret"}}},
+		{InboundTag: "x", ListenPort: 1, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem", Users: []ManagedRelayUser{{Email: "a", Password: "same", ExitTag: "e"}, {Email: "b", Password: "same", ExitTag: "e"}}, Exits: []ManagedRelayExit{{Tag: "e", Server: "x", ServerPort: 1, Password: "exit-secret"}}},
 	}
 	for _, input := range cases {
 		if _, err := BuildManagedRelayFragment(input); err == nil {

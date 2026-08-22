@@ -22,9 +22,9 @@ func PlanManagedRelayUserState(fragment RelayFragment, user ManagedRelayUser, en
 		if strings.HasPrefix(planned.Inbounds[i].Tag, "managed-relay") && managedInbound < 0 {
 			managedInbound = i
 		}
-		kept := make([]ManagedRelayUser, 0, len(planned.Inbounds[i].Users))
+		kept := make([]ManagedRelayInboundUser, 0, len(planned.Inbounds[i].Users))
 		for _, existing := range planned.Inbounds[i].Users {
-			if strings.ToLower(strings.TrimSpace(existing.Email)) == key {
+			if canonicalRelayEmail(existing.Name) == key {
 				found = true
 				continue
 			}
@@ -41,8 +41,8 @@ func PlanManagedRelayUserState(fragment RelayFragment, user ManagedRelayUser, en
 		return planned, nil
 	}
 
-	if strings.TrimSpace(user.UUID) == "" || strings.TrimSpace(user.ExitTag) == "" {
-		return RelayFragment{}, errors.New("managed relay enable requires user uuid and exit tag")
+	if strings.TrimSpace(user.Password) == "" || strings.TrimSpace(user.ExitTag) == "" {
+		return RelayFragment{}, errors.New("managed relay enable requires user password and exit tag")
 	}
 	if managedInbound < 0 {
 		return RelayFragment{}, errors.New("managed relay inbound not found")
@@ -58,9 +58,9 @@ func PlanManagedRelayUserState(fragment RelayFragment, user ManagedRelayUser, en
 	if !outboundFound {
 		return RelayFragment{}, fmt.Errorf("managed relay exit %q not found", user.ExitTag)
 	}
-	planned.Inbounds[managedInbound].Users = append(planned.Inbounds[managedInbound].Users, user)
+	planned.Inbounds[managedInbound].Users = append(planned.Inbounds[managedInbound].Users, ManagedRelayInboundUser{Name: user.Email, Password: user.Password})
 	sort.Slice(planned.Inbounds[managedInbound].Users, func(i, j int) bool {
-		return planned.Inbounds[managedInbound].Users[i].Email < planned.Inbounds[managedInbound].Users[j].Email
+		return planned.Inbounds[managedInbound].Users[i].Name < planned.Inbounds[managedInbound].Users[j].Name
 	})
 	planned.RouteRules = removeManagedRelayUserRules(planned.RouteRules, key)
 	planned.RouteRules = append(planned.RouteRules, ManagedRelayRouteRule{
@@ -78,7 +78,7 @@ func cloneRelayFragment(fragment RelayFragment) RelayFragment {
 	clone.Inbounds = make([]ManagedRelayInbound, len(fragment.Inbounds))
 	for i, inbound := range fragment.Inbounds {
 		clone.Inbounds[i] = inbound
-		clone.Inbounds[i].Users = append([]ManagedRelayUser(nil), inbound.Users...)
+		clone.Inbounds[i].Users = append([]ManagedRelayInboundUser(nil), inbound.Users...)
 	}
 	for i := range clone.RouteRules {
 		clone.RouteRules[i].Inbound = append([]string(nil), clone.RouteRules[i].Inbound...)

@@ -17,9 +17,9 @@ func TestMergeManagedRelayFragmentPreservesLegacyConfigAndReplacesOnlyManagedTag
 		}},
 	}
 	fragment, err := BuildManagedRelayFragment(RelayFragmentInput{
-		InboundTag: "managed-relay-new", ListenPort: 29001,
-		Users: []ManagedRelayUser{{Email: "alice", UUID: "u", ExitTag: "us2"}},
-		Exits: []ManagedRelayExit{{Tag: "us2", Server: "new.example", ServerPort: 443}},
+		InboundTag: "managed-relay-new", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem",
+		Users: []ManagedRelayUser{{Email: "alice", Password: "u", ExitTag: "us2"}},
+		Exits: []ManagedRelayExit{{Tag: "us2", Server: "new.example", ServerPort: 443, Password: "exit-secret"}},
 	})
 	if err != nil {
 		t.Fatal(err)

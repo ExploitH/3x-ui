@@ -12,11 +12,13 @@ type ManagedRelayStateUser struct {
 }
 
 type ManagedRelayState struct {
-	Version    int                     `json:"version"`
-	InboundTag string                  `json:"inboundTag"`
-	ListenPort int                     `json:"listenPort"`
-	Exits      []ManagedRelayExit      `json:"exits"`
-	Users      []ManagedRelayStateUser `json:"users"`
+	Version         int                     `json:"version"`
+	InboundTag      string                  `json:"inboundTag"`
+	ListenPort      int                     `json:"listenPort"`
+	CertificatePath string                  `json:"certificatePath"`
+	KeyPath         string                  `json:"keyPath"`
+	Exits           []ManagedRelayExit      `json:"exits"`
+	Users           []ManagedRelayStateUser `json:"users"`
 }
 
 func (s ManagedRelayState) ActiveFragment() (RelayFragment, error) {
@@ -30,10 +32,9 @@ func (s ManagedRelayState) ActiveFragment() (RelayFragment, error) {
 		}
 	}
 	return BuildManagedRelayFragment(RelayFragmentInput{
-		InboundTag: s.InboundTag,
-		ListenPort: s.ListenPort,
-		Users:      active,
-		Exits:      append([]ManagedRelayExit(nil), s.Exits...),
+		InboundTag: s.InboundTag, ListenPort: s.ListenPort,
+		CertificatePath: s.CertificatePath, KeyPath: s.KeyPath,
+		Users: active, Exits: append([]ManagedRelayExit(nil), s.Exits...),
 	})
 }
 
@@ -80,8 +81,8 @@ func (s ManagedRelayState) UpsertUser(user ManagedRelayUser, enabled bool) (Mana
 			updated.Users[i] = ManagedRelayStateUser{ManagedRelayUser: canonical, Enabled: enabled}
 			return updated, updated.validate()
 		}
-		if strings.TrimSpace(updated.Users[i].UUID) == canonical.UUID {
-			return ManagedRelayState{}, fmt.Errorf("managed relay uuid already belongs to %q", updated.Users[i].Email)
+		if strings.TrimSpace(updated.Users[i].Password) == canonical.Password {
+			return ManagedRelayState{}, fmt.Errorf("managed relay password already belongs to %q", updated.Users[i].Email)
 		}
 	}
 	updated.Users = append(updated.Users, ManagedRelayStateUser{ManagedRelayUser: canonical, Enabled: enabled})
@@ -118,30 +119,30 @@ func (s ManagedRelayState) validate() error {
 		return err
 	}
 	seenEmail := make(map[string]struct{}, len(s.Users))
-	seenUUID := make(map[string]struct{}, len(s.Users))
+	seenPassword := make(map[string]struct{}, len(s.Users))
 	allUsers := make([]ManagedRelayUser, 0, len(s.Users))
 	for _, stateUser := range s.Users {
 		user, err := normalizeManagedRelayUser(stateUser.ManagedRelayUser)
 		if err != nil {
 			return err
 		}
-		if user.Email != stateUser.Email || user.UUID != stateUser.UUID || user.ExitTag != stateUser.ExitTag {
+		if user.Email != stateUser.Email || user.Password != stateUser.Password || user.ExitTag != stateUser.ExitTag {
 			return fmt.Errorf("managed relay user %q is not canonicalized", stateUser.Email)
 		}
 		if _, exists := seenEmail[user.Email]; exists {
 			return fmt.Errorf("duplicate managed relay user %q", user.Email)
 		}
-		if _, exists := seenUUID[user.UUID]; exists {
-			return fmt.Errorf("duplicate managed relay uuid for %q", user.Email)
+		if _, exists := seenPassword[user.Password]; exists {
+			return fmt.Errorf("duplicate managed relay password for %q", user.Email)
 		}
 		if !managedRelayExitExists(s.Exits, user.ExitTag) {
 			return fmt.Errorf("user %q references unknown exit %q", user.Email, user.ExitTag)
 		}
 		seenEmail[user.Email] = struct{}{}
-		seenUUID[user.UUID] = struct{}{}
+		seenPassword[user.Password] = struct{}{}
 		allUsers = append(allUsers, user)
 	}
-	_, err := BuildManagedRelayFragment(RelayFragmentInput{InboundTag: s.InboundTag, ListenPort: s.ListenPort, Users: allUsers, Exits: s.Exits})
+	_, err := BuildManagedRelayFragment(RelayFragmentInput{InboundTag: s.InboundTag, ListenPort: s.ListenPort, CertificatePath: s.CertificatePath, KeyPath: s.KeyPath, Users: allUsers, Exits: s.Exits})
 	return err
 }
 
@@ -149,10 +150,10 @@ func (s ManagedRelayState) validateBase() error {
 	if s.Version != 1 {
 		return fmt.Errorf("unsupported managed relay state version %d", s.Version)
 	}
-	if strings.TrimSpace(s.InboundTag) == "" || s.ListenPort < 1 || s.ListenPort > 65535 {
+	if strings.TrimSpace(s.InboundTag) == "" || s.ListenPort < 1 || s.ListenPort > 65535 || strings.TrimSpace(s.CertificatePath) == "" || strings.TrimSpace(s.KeyPath) == "" {
 		return errors.New("managed relay inbound tag and port are required")
 	}
-	if _, err := BuildManagedRelayFragment(RelayFragmentInput{InboundTag: s.InboundTag, ListenPort: s.ListenPort, Exits: s.Exits}); err != nil {
+	if _, err := BuildManagedRelayFragment(RelayFragmentInput{InboundTag: s.InboundTag, ListenPort: s.ListenPort, CertificatePath: s.CertificatePath, KeyPath: s.KeyPath, Exits: s.Exits}); err != nil {
 		return err
 	}
 	return nil
@@ -160,10 +161,10 @@ func (s ManagedRelayState) validateBase() error {
 
 func normalizeManagedRelayUser(user ManagedRelayUser) (ManagedRelayUser, error) {
 	user.Email = canonicalRelayEmail(user.Email)
-	user.UUID = strings.TrimSpace(user.UUID)
+	user.Password = strings.TrimSpace(user.Password)
 	user.ExitTag = strings.TrimSpace(user.ExitTag)
-	if user.Email == "" || user.UUID == "" || user.ExitTag == "" {
-		return ManagedRelayUser{}, errors.New("managed relay user email, uuid, and exit tag are required")
+	if user.Email == "" || user.Password == "" || user.ExitTag == "" {
+		return ManagedRelayUser{}, errors.New("managed relay user email, password, and exit tag are required")
 	}
 	return user, nil
 }

@@ -4,18 +4,18 @@ import "testing"
 
 func TestManagedRelayStateKeepsDisabledCanonicalSpecAndRebuildsExit(t *testing.T) {
 	state := ManagedRelayState{
-		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001,
-		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443}},
+		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem",
+		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}},
 		Users: []ManagedRelayStateUser{
-			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", UUID: "alice-uuid", ExitTag: "us2"}, Enabled: true},
-			{ManagedRelayUser: ManagedRelayUser{Email: "bob@example.com", UUID: "bob-uuid", ExitTag: "us2"}, Enabled: false},
+			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", Password: "alice-uuid", ExitTag: "us2"}, Enabled: true},
+			{ManagedRelayUser: ManagedRelayUser{Email: "bob@example.com", Password: "bob-uuid", ExitTag: "us2"}, Enabled: false},
 		},
 	}
 	fragment, err := state.ActiveFragment()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment.Inbounds) != 1 || len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].Email != "alice@example.com" {
+	if len(fragment.Inbounds) != 1 || len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].Name != "alice@example.com" {
 		t.Fatalf("active users=%+v", fragment.Inbounds)
 	}
 	updated, err := state.SetUserEnabled("alice@example.com", false)
@@ -37,7 +37,7 @@ func TestManagedRelayStateKeepsDisabledCanonicalSpecAndRebuildsExit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].UUID != "alice-uuid" || len(fragment.Outbounds) != 2 {
+	if len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].Password != "alice-uuid" || len(fragment.Outbounds) != 2 {
 		t.Fatalf("restored fragment=%+v", fragment)
 	}
 	var bob ManagedRelayStateUser
@@ -46,18 +46,18 @@ func TestManagedRelayStateKeepsDisabledCanonicalSpecAndRebuildsExit(t *testing.T
 			bob = user
 		}
 	}
-	if bob.UUID != "bob-uuid" || bob.ExitTag != "us2" || bob.Enabled {
+	if bob.Password != "bob-uuid" || bob.ExitTag != "us2" || bob.Enabled {
 		t.Fatalf("disabled canonical state lost=%+v", bob)
 	}
 }
 
 func TestManagedRelayStateRejectsUnknownAndDuplicateUsers(t *testing.T) {
 	state := ManagedRelayState{
-		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001,
-		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443}},
+		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem",
+		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}},
 		Users: []ManagedRelayStateUser{
-			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", UUID: "alice-uuid", ExitTag: "us2"}, Enabled: true},
-			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", UUID: "other-uuid", ExitTag: "us2"}, Enabled: false},
+			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", Password: "alice-uuid", ExitTag: "us2"}, Enabled: true},
+			{ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", Password: "other-uuid", ExitTag: "us2"}, Enabled: false},
 		},
 	}
 	if _, err := state.ActiveFragment(); err == nil {
@@ -70,9 +70,9 @@ func TestManagedRelayStateRejectsUnknownAndDuplicateUsers(t *testing.T) {
 }
 
 func TestManagedRelayStateUpsertAndRemoveAreCanonical(t *testing.T) {
-	state := ManagedRelayState{Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001, Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443}}}
+	state := ManagedRelayState{Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem", Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}}}
 	var err error
-	state, err = state.UpsertUser(ManagedRelayUser{Email: " Alice@example.com ", UUID: "alice-uuid", ExitTag: "us2"}, false)
+	state, err = state.UpsertUser(ManagedRelayUser{Email: " Alice@example.com ", Password: "alice-uuid", ExitTag: "us2"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestManagedRelayStateUpsertAndRemoveAreCanonical(t *testing.T) {
 		t.Fatal(err)
 	}
 	fragment, err := state.ActiveFragment()
-	if err != nil || len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].Email != "alice@example.com" {
+	if err != nil || len(fragment.Inbounds[0].Users) != 1 || fragment.Inbounds[0].Users[0].Name != "alice@example.com" {
 		t.Fatalf("canonical upsert fragment=%+v err=%v", fragment, err)
 	}
 	state, err = state.RemoveUser(" ALICE@EXAMPLE.COM ")

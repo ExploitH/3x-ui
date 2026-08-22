@@ -16,9 +16,9 @@ func TestEncodeManagedConfigMergesOnlyManagedEntries(t *testing.T) {
 		"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
 	}
 	fragment, err := BuildManagedRelayFragment(RelayFragmentInput{
-		InboundTag: "managed-relay-hk1", ListenPort: 29001,
-		Users: []ManagedRelayUser{{Email: "alice@example.com", UUID: "alice-uuid", ExitTag: "us2"}},
-		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443}},
+		InboundTag: "managed-relay-hk1", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem",
+		Users: []ManagedRelayUser{{Email: "alice@example.com", Password: "alice-uuid", ExitTag: "us2"}},
+		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}},
 	})
 	if err != nil {
 		t.Fatal(err)

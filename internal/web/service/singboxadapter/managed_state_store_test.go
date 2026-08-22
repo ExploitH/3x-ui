@@ -10,10 +10,10 @@ import (
 
 func testManagedRelayState() ManagedRelayState {
 	return ManagedRelayState{
-		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001,
-		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443}},
+		Version: 1, InboundTag: "managed-relay-hk1", ListenPort: 29001, CertificatePath: "/etc/sing-box/cert.pem", KeyPath: "/etc/sing-box/key.pem",
+		Exits: []ManagedRelayExit{{Tag: "us2", Server: "us2.example", ServerPort: 443, Password: "exit-secret"}},
 		Users: []ManagedRelayStateUser{{
-			ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", UUID: "alice-uuid", ExitTag: "us2"},
+			ManagedRelayUser: ManagedRelayUser{Email: "alice@example.com", Password: "alice-uuid", ExitTag: "us2"},
 			Enabled:          true,
 		}},
 	}
@@ -36,7 +36,7 @@ func TestManagedRelayStateStoreSaveLoadAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Users[0].UUID != "alice-uuid" || !loaded.Users[0].Enabled {
+	if loaded.Users[0].Password != "alice-uuid" || !loaded.Users[0].Enabled {
 		t.Fatalf("loaded state=%+v", loaded)
 	}
 	if err := store.Update(context.Background(), func(state ManagedRelayState) (ManagedRelayState, error) {
@@ -79,7 +79,7 @@ func TestManagedRelayStateStoreNeverSerializesMalformedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := NewManagedRelayStateStore(path)
 	state := testManagedRelayState()
-	state.Users[0].UUID = ""
+	state.Users[0].Password = ""
 	if err := store.Save(context.Background(), state); err == nil {
 		t.Fatal("malformed state accepted")
 	}
