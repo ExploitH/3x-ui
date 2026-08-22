@@ -49,6 +49,11 @@ const errBodyDiagBytes = 8 << 10 // 8 KiB
 // errRemoteResponseTooLarge is returned when a node response exceeds the cap.
 var errRemoteResponseTooLarge = errors.New("remote response exceeds size limit")
 
+// ErrCapabilitiesUnsupported means the node uses the legacy 3x-ui API surface
+// and has no capability-discovery endpoint. Legacy nodes remain compatible; a
+// successful capability response is authoritative for newer adapters.
+var ErrCapabilitiesUnsupported = errors.New("remote node does not expose capabilities")
+
 // readCappedBody reads all of r but rejects bodies larger than limit, returning
 // errRemoteResponseTooLarge. It reads at most limit+1 bytes so a body of exactly
 // limit is accepted and the first oversize byte is detected without buffering
@@ -697,6 +702,42 @@ func (r *Remote) ResetAllTraffics(ctx context.Context) error {
 func (r *Remote) ResetInboundTraffic(ctx context.Context, ib *model.Inbound) error {
 	_, err := r.do(ctx, http.MethodPost, fmt.Sprintf("panel/api/inbounds/%d/resetTraffic", ib.Id), nil)
 	return err
+}
+
+type NodeCapabilities struct {
+	Mode             string `json:"mode"`
+	Config           bool   `json:"config"`
+	InboundInventory bool   `json:"inboundInventory"`
+	ClientCrud       bool   `json:"clientCrud"`
+	ClientEnable     bool   `json:"clientEnable"`
+	PerClientTraffic bool   `json:"perClientTraffic"`
+	TrafficReset     bool   `json:"trafficReset"`
+	ClientIP         bool   `json:"clientIp"`
+	RelayIdentity    bool   `json:"relayIdentity"`
+}
+
+// FetchCapabilities reads the optional adapter capability contract. A 404 is
+// treated as a legacy node rather than a hard error so existing 3x-ui Nodes
+// remain upgrade-compatible.
+func (r *Remote) FetchCapabilities(ctx context.Context) (*NodeCapabilities, error) {
+	env, err := r.do(ctx, http.MethodGet, "panel/api/server/capabilities", nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 404") {
+			return nil, fmt.Errorf("%w: %w", ErrCapabilitiesUnsupported, err)
+		}
+		return nil, err
+	}
+	var caps NodeCapabilities
+	if len(env.Obj) == 0 {
+		return nil, errors.New("remote capabilities response is empty")
+	}
+	if err := json.Unmarshal(env.Obj, &caps); err != nil {
+		return nil, fmt.Errorf("decode node capabilities: %w", err)
+	}
+	if caps.Mode == "" {
+		return nil, errors.New("remote capabilities mode is empty")
+	}
+	return &caps, nil
 }
 
 type TrafficSnapshot struct {

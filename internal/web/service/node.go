@@ -867,7 +867,51 @@ func (s *NodeService) Delete(id int) error {
 	return nil
 }
 
+func validateNodeEnableCapabilities(
+	ctx context.Context,
+	remote interface {
+		FetchCapabilities(context.Context) (*runtime.NodeCapabilities, error)
+	},
+) error {
+	caps, err := remote.FetchCapabilities(ctx)
+	if err != nil {
+		// Older upstream 3x-ui nodes do not have this optional endpoint and
+		// remain compatible. Any other error is fail-closed for an enable action.
+		if errors.Is(err, runtime.ErrCapabilitiesUnsupported) {
+			return nil
+		}
+		return fmt.Errorf("node capability check failed: %w", err)
+	}
+	if caps == nil {
+		return errors.New("node capability check returned no capabilities")
+	}
+	if caps.Mode == "readonly" || !caps.PerClientTraffic {
+		return errors.New("node capability gate: per-client traffic is not supported")
+	}
+	return nil
+}
+
 func (s *NodeService) SetEnable(id int, enable bool) error {
+	if enable {
+		n, err := s.GetById(id)
+		if err != nil {
+			return err
+		}
+		mgr := runtime.GetManager()
+		if mgr == nil {
+			return errors.New("runtime manager unavailable for node capability check")
+		}
+		remote, err := mgr.RemoteFor(n)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		err = validateNodeEnableCapabilities(ctx, remote)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	db := database.GetDB()
 	if err := db.Model(model.Node{}).Where("id = ?", id).Update("enable", enable).Error; err != nil {
 		return err

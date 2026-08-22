@@ -121,6 +121,42 @@ func TestReadCappedBody_Boundary(t *testing.T) {
 // TestRemoteDo_NonOKStatusReturnsHTTPError confirms a non-OK status is reported
 // as an HTTP error (with a bounded diagnostic snippet) rather than being read as
 // a success payload — i.e. status precedence over the body.
+func TestRemoteFetchCapabilities(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotPath = req.URL.Path
+		gotAuth = req.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"readonly","config":true,"inboundInventory":true,"clientCrud":false,"clientEnable":false,"perClientTraffic":false,"trafficReset":false,"clientIp":false,"relayIdentity":false}}`))
+	}))
+	defer srv.Close()
+	r := NewRemote(nodeForPlainServer(t, srv, "verify", "tok"), nil)
+	caps, err := r.FetchCapabilities(context.Background())
+	if err != nil {
+		t.Fatalf("FetchCapabilities: %v", err)
+	}
+	if gotPath != "/panel/api/server/capabilities" {
+		t.Fatalf("path=%q", gotPath)
+	}
+	if gotAuth != "Bearer tok" {
+		t.Fatalf("authorization=%q", gotAuth)
+	}
+	if caps.Mode != "readonly" || caps.PerClientTraffic {
+		t.Fatalf("capabilities=%+v", caps)
+	}
+}
+
+func TestRemoteFetchCapabilitiesTreats404AsLegacy(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	r := NewRemote(nodeForPlainServer(t, srv, "verify", "tok"), nil)
+	_, err := r.FetchCapabilities(context.Background())
+	if !errors.Is(err, ErrCapabilitiesUnsupported) {
+		t.Fatalf("error=%v, want ErrCapabilitiesUnsupported", err)
+	}
+}
+
 func TestRemoteDo_NonOKStatusReturnsHTTPError(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
