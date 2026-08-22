@@ -913,6 +913,9 @@ func validateNodeEnableCapabilities(
 	if caps.Mode == "readonly" || !caps.PerClientTraffic {
 		return errors.New("node capability gate: per-client traffic is not supported")
 	}
+	if !caps.ClientCrud || !caps.ClientEnable {
+		return errors.New("node capability gate: full client management is not supported")
+	}
 	return nil
 }
 

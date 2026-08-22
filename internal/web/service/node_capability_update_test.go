@@ -104,7 +104,7 @@ func TestUpdateUsesStoredTokenWhenEnablingDisabledNode(t *testing.T) {
 			t.Fatalf("unexpected remote path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"managed","perClientTraffic":true}}`))
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"mode":"managed","clientCrud":true,"clientEnable":true,"perClientTraffic":true}}`))
 	}))
 	defer remote.Close()
 	host, portString, err := net.SplitHostPort(strings.TrimPrefix(remote.URL, "http://"))

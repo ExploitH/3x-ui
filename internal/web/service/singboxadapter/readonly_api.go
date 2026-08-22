@@ -1,6 +1,7 @@
 package singboxadapter
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -17,22 +18,42 @@ import (
 const readonlyPanelVersion = "singbox-adapter-readonly"
 
 type ReadOnlyOptions struct {
-	ConfigPath string
-	ConfigJSON []byte
-	Token      string
-	BasePath   string
+	ConfigPath      string
+	ConfigJSON      []byte
+	Token           string
+	BasePath        string
+	V2RayAPIAddress string
+	StatsProvider   TrafficStatsProvider
 }
 
 type ReadOnlyHandler struct {
-	token      []byte
-	basePath   string
-	configPath string
-	configJSON []byte
-	startedAt  time.Time
+	token       []byte
+	basePath    string
+	configPath  string
+	configJSON  []byte
+	startedAt   time.Time
+	stats       TrafficStatsProvider
+	statsCloser func() error
 }
 
 type singboxConfig struct {
-	Inbounds []singboxInbound `json:"inbounds"`
+	Inbounds     []singboxInbound    `json:"inbounds"`
+	Experimental singboxExperimental `json:"experimental"`
+}
+
+type singboxExperimental struct {
+	V2RayAPI *singboxV2RayAPI `json:"v2ray_api"`
+}
+
+type singboxV2RayAPI struct {
+	Listen string          `json:"listen"`
+	Stats  singboxStatsAPI `json:"stats"`
+}
+
+type singboxStatsAPI struct {
+	Enabled  bool     `json:"enabled"`
+	Inbounds []string `json:"inbounds"`
+	Users    []string `json:"users"`
 }
 
 type singboxInbound struct {
@@ -83,7 +104,7 @@ type readOnlyEnvelope struct {
 	Obj     any    `json:"obj,omitempty"`
 }
 
-func NewReadOnlyHandler(options ReadOnlyOptions) (http.Handler, error) {
+func NewReadOnlyHandler(options ReadOnlyOptions) (*ReadOnlyHandler, error) {
 	normalizedToken := strings.TrimSpace(options.Token)
 	if normalizedToken == "" {
 		return nil, errors.New("sing-box adapter token is required")
@@ -98,11 +119,28 @@ func NewReadOnlyHandler(options ReadOnlyOptions) (http.Handler, error) {
 		configPath: options.ConfigPath,
 		configJSON: append([]byte(nil), options.ConfigJSON...),
 		startedAt:  time.Now(),
+		stats:      options.StatsProvider,
+	}
+	if h.stats == nil && strings.TrimSpace(options.V2RayAPIAddress) != "" {
+		client, err := dialV2RayStatsClient(context.Background(), strings.TrimSpace(options.V2RayAPIAddress))
+		if err != nil {
+			return nil, err
+		}
+		h.stats = client
+		h.statsCloser = client.Close
 	}
 	if _, err := h.loadConfig(); err != nil {
+		_ = h.Close()
 		return nil, err
 	}
 	return h, nil
+}
+
+func (h *ReadOnlyHandler) Close() error {
+	if h == nil || h.statsCloser == nil {
+		return nil
+	}
+	return h.statsCloser()
 }
 
 func normalizeAdapterBasePath(path string) string {
@@ -140,6 +178,8 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w)
 	case "panel/api/server/capabilities":
 		h.handleCapabilities(w)
+	case "panel/api/traffic/snapshot":
+		h.handleTrafficSnapshot(w, r)
 	case "healthz":
 		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"mode": "readonly"}})
 	default:
@@ -225,11 +265,19 @@ func (h *ReadOnlyHandler) handleStatus(w http.ResponseWriter) {
 }
 
 func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
-	if _, err := h.loadConfig(); err != nil {
+	cfg, err := h.loadConfig()
+	if err != nil {
 		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
 		return
 	}
-	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: readonlyCapabilities})
+	caps := readonlyCapabilities
+	if h.stats != nil {
+		if _, err := buildTrafficPlan(cfg); err == nil {
+			caps.Mode = "traffic-readonly"
+			caps.PerClientTraffic = true
+		}
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: caps})
 }
 
 func (h *ReadOnlyHandler) panelGuid() string {

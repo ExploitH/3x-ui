@@ -29,9 +29,24 @@ func TestValidateNodeEnableCapabilities(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "managed traffic node allowed",
-			stub:    capabilityReaderStub{caps: &runtime.NodeCapabilities{Mode: "managed", PerClientTraffic: true}},
+			name: "managed traffic node allowed",
+			stub: capabilityReaderStub{caps: &runtime.NodeCapabilities{
+				Mode:             "managed",
+				ClientCrud:       true,
+				ClientEnable:     true,
+				PerClientTraffic: true,
+			}},
 			wantErr: false,
+		},
+		{
+			name: "traffic-only node rejected",
+			stub: capabilityReaderStub{caps: &runtime.NodeCapabilities{
+				Mode:             "traffic-readonly",
+				ClientCrud:       false,
+				ClientEnable:     false,
+				PerClientTraffic: true,
+			}},
+			wantErr: true,
 		},
 		{
 			name:    "legacy node remains compatible",

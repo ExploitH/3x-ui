@@ -20,6 +20,7 @@ func main() {
 	tokenPath := envOr("SINGBOX_ADAPTER_TOKEN_FILE", "/etc/sing-box/adapter.token")
 	listen := envOr("SINGBOX_ADAPTER_LISTEN", "127.0.0.1:23854")
 	basePath := envOr("SINGBOX_ADAPTER_BASE_PATH", "/adapter/")
+	v2rayAPIAddress := strings.TrimSpace(os.Getenv("SINGBOX_ADAPTER_V2RAY_API"))
 
 	token, err := readTokenFile(tokenPath)
 	if err != nil {
@@ -27,9 +28,10 @@ func main() {
 	}
 
 	handler, err := singboxadapter.NewReadOnlyHandler(singboxadapter.ReadOnlyOptions{
-		ConfigPath: configPath,
-		Token:      token,
-		BasePath:   basePath,
+		ConfigPath:      configPath,
+		Token:           token,
+		BasePath:        basePath,
+		V2RayAPIAddress: v2rayAPIAddress,
 	})
 	if err != nil {
 		log.Fatalf("initialize read-only adapter: %v", err)
@@ -57,6 +59,9 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("adapter shutdown: %v", err)
+	}
+	if err := handler.Close(); err != nil {
+		log.Printf("close V2Ray API client: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ GET  <base>/healthz
 GET  <base>/panel/api/server/status
 GET  <base>/panel/api/server/capabilities
 GET  <base>/panel/api/inbounds/list
+GET  <base>/panel/api/traffic/snapshot  (when V2Ray API is configured)
 ```
 
 The capability endpoint returns an explicit gate for the current adapter mode:
@@ -27,7 +28,17 @@ The capability endpoint returns an explicit gate for the current adapter mode:
 }
 ```
 
-The Master must not enable a node while `perClientTraffic` is false.
+When `SINGBOX_ADAPTER_V2RAY_API` points to a loopback V2Ray API and the
+sing-box config has `experimental.v2ray_api.stats.enabled=true`, the adapter
+also exposes a read-only snapshot. Every inbound user must have a stable
+`name`, and that name must be present in `stats.users`; every inbound tag must
+be present in `stats.inbounds`.
+
+The snapshot queries `QueryStats` with reset disabled and returns both user
+counters and physical inbound counters. It never calls the V2Ray reset API.
+The capability becomes `mode=traffic-readonly` and `perClientTraffic=true`, but
+`clientCrud=false` and `clientEnable=false` remain false; the Master must not
+enable this Node as a full managed node.
 
 All requests require `Authorization: Bearer <token>`. Any mutation is rejected
 with HTTP 405. The adapter never writes the sing-box config, never restarts
@@ -49,6 +60,7 @@ Environment variables:
 | `SINGBOX_ADAPTER_TOKEN_FILE` | `/etc/sing-box/adapter.token` |
 | `SINGBOX_ADAPTER_LISTEN` | `127.0.0.1:23854` |
 | `SINGBOX_ADAPTER_BASE_PATH` | `/adapter/` |
+| `SINGBOX_ADAPTER_V2RAY_API` | empty; disables traffic-readonly mode |
 
 The token file must be mode `0600` or stricter. The adapter reloads the JSON
 configuration for each inbound-list request and rejects malformed configs,
@@ -73,6 +85,7 @@ Before starting it on HK3:
 7. Roll back by stopping/disabling only `singbox-adapter.service` and removing
    its files.
 
-This slice does not yet provide client CRUD, enable/disable, traffic counters,
-reset, or provider billing import. Those are deliberately separate gates so a
-read-only Master↔Node canary cannot mutate production data-plane state.
+This slice does not yet provide client CRUD, enable/disable, traffic reset, or
+provider billing import. Traffic snapshot is read-only and requires the
+explicit V2Ray API configuration described above. Relay-to-exit identity
+propagation remains a separate gate.
