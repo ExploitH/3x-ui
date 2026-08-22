@@ -69,6 +69,40 @@ func seedNodeQuotaResetFixture(t *testing.T, email string, recordEnable, traffic
 	return nodeID, recorder, record
 }
 
+func TestNodeQuotaResetDueBoundaries(t *testing.T) {
+	utc := time.UTC
+	cases := []struct {
+		name      string
+		policy    string
+		resetDay  int
+		lastReset time.Time
+		now       time.Time
+		want      bool
+	}{
+		{name: "never", policy: "never", now: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), want: false},
+		{name: "daily due", policy: "daily", lastReset: time.Date(2026, time.February, 27, 23, 0, 0, 0, utc), now: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), want: true},
+		{name: "daily already reset", policy: "daily", lastReset: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 28, 12, 0, 0, 0, utc), want: false},
+		{name: "weekly due", policy: "weekly", lastReset: time.Date(2026, time.February, 15, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 22, 0, 0, 0, 0, utc), want: true},
+		{name: "weekly already reset", policy: "weekly", lastReset: time.Date(2026, time.February, 22, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 22, 12, 0, 0, 0, utc), want: false},
+		{name: "31st clamps to February end", policy: "monthly", resetDay: 31, lastReset: time.Date(2026, time.January, 31, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), want: true},
+		{name: "manual reset before monthly boundary does not swallow boundary", policy: "monthly", resetDay: 28, lastReset: time.Date(2026, time.February, 10, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), want: true},
+		{name: "monthly boundary already reset", policy: "monthly", resetDay: 28, lastReset: time.Date(2026, time.February, 28, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 28, 12, 0, 0, 0, utc), want: false},
+		{name: "31st waits for February end", policy: "monthly", resetDay: 31, lastReset: time.Date(2026, time.January, 31, 0, 0, 0, 0, utc), now: time.Date(2026, time.February, 27, 0, 0, 0, 0, utc), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			last := int64(0)
+			if !tc.lastReset.IsZero() {
+				last = tc.lastReset.UnixMilli()
+			}
+			if got := nodeQuotaResetDue(tc.policy, tc.resetDay, last, tc.now); got != tc.want {
+				t.Fatalf("nodeQuotaResetDue(%q, day=%d, last=%s, now=%s) = %v, want %v",
+					tc.policy, tc.resetDay, tc.lastReset, tc.now, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResetClientNodeTrafficRestoresOnlyTargetNode(t *testing.T) {
 	nodeID, recorder, record := seedNodeQuotaResetFixture(t, "reset-target@x", true, true, 10_000, 500, 700, 0)
 	db := database.GetDB()

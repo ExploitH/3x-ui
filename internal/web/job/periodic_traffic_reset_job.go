@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"time"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
@@ -40,6 +41,22 @@ func monthlyResetDue(resetDay int, now time.Time) bool {
 func (j *PeriodicTrafficResetJob) Run() {
 	j.resetInboundsOnSchedule()
 	j.resetClientsOnTheirOwnCycle()
+	j.resetNodeQuotasOnSchedule()
+}
+
+func (j *PeriodicTrafficResetJob) resetNodeQuotasOnSchedule() {
+	location := j.location
+	if location == nil {
+		location = time.Local
+	}
+	now := time.Now().In(location)
+	resetCount, err := j.inboundService.ResetClientNodeQuotasOnSchedule(context.Background(), string(j.period), now)
+	if err != nil {
+		logger.Warning("Failed to reset scheduled per-node client quotas:", err)
+	}
+	if resetCount > 0 {
+		logger.Infof("Periodic per-node traffic reset completed: %d client-node quotas reset", resetCount)
+	}
 }
 
 func (j *PeriodicTrafficResetJob) resetInboundsOnSchedule() {

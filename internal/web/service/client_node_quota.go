@@ -649,6 +649,87 @@ func (s *InboundService) ResetAllClientNodeTraffic(ctx context.Context, email st
 	return pending, nil
 }
 
+type clientNodeQuotaResetCandidate struct {
+	ClientId  int    `gorm:"column:client_id"`
+	NodeId    int    `gorm:"column:node_id"`
+	ResetDay  int    `gorm:"column:reset_day"`
+	LastReset int64  `gorm:"column:last_reset_at"`
+	Email     string `gorm:"column:email"`
+}
+
+func nodeQuotaResetDue(policy string, resetDay int, lastResetAt int64, now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	loc := now.Location()
+	var cycleStart time.Time
+	switch policy {
+	case "hourly":
+		cycleStart = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, loc)
+	case "daily":
+		cycleStart = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	case "weekly":
+		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		daysSinceSunday := int(now.Weekday())
+		cycleStart = midnight.AddDate(0, 0, -daysSinceSunday)
+	case "monthly":
+		if resetDay < 1 {
+			resetDay = 1
+		}
+		lastDay := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, loc).Day()
+		scheduledDay := min(resetDay, lastDay)
+		if now.Day() != scheduledDay {
+			return false
+		}
+		cycleStart = time.Date(now.Year(), now.Month(), scheduledDay, 0, 0, 0, 0, loc)
+	case "never":
+		return false
+	default:
+		return false
+	}
+	if lastResetAt <= 0 {
+		return true
+	}
+	return time.UnixMilli(lastResetAt).In(loc).Before(cycleStart)
+}
+
+// ResetClientNodeQuotasOnSchedule resets every due per-node quota for one cron
+// period. Each candidate uses the same reason-aware reset path as the manual API.
+func (s *InboundService) ResetClientNodeQuotasOnSchedule(ctx context.Context, policy string, now time.Time) (int, error) {
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	switch policy {
+	case "hourly", "daily", "weekly", "monthly":
+	case "never":
+		return 0, nil
+	default:
+		return 0, common.NewError("invalid node quota reset policy")
+	}
+
+	var candidates []clientNodeQuotaResetCandidate
+	if err := database.GetDB().Table("client_node_quotas AS quota").
+		Select("quota.client_id, quota.node_id, quota.reset_day, quota.last_reset_at, clients.email").
+		Joins("JOIN clients ON clients.id = quota.client_id").
+		Where("quota.reset_policy = ?", policy).
+		Order("quota.node_id ASC, quota.client_id ASC").
+		Scan(&candidates).Error; err != nil {
+		return 0, err
+	}
+
+	resetCount := 0
+	var resetErrs []error
+	for _, candidate := range candidates {
+		if !nodeQuotaResetDue(policy, candidate.ResetDay, candidate.LastReset, now) {
+			continue
+		}
+		if _, err := s.ResetClientNodeTraffic(ctx, candidate.Email, candidate.NodeId); err != nil {
+			resetErrs = append(resetErrs, fmt.Errorf("node %d client %q: %w", candidate.NodeId, candidate.Email, err))
+			continue
+		}
+		resetCount++
+	}
+	return resetCount, errors.Join(resetErrs...)
+}
+
 func recordNodeQuotaApplyResult(db *gorm.DB, stateID int, blocked bool, appliedAt int64, applyErr error) error {
 	message := ""
 	if applyErr != nil {
