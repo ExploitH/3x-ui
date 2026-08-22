@@ -51,12 +51,69 @@ func addClientNodeUsageDeltaTx(tx *gorm.DB, nodeID int, email string, up, down, 
 		CycleStartedAt: now,
 		UpdatedAt:      now,
 	}
-	return tx.Clauses(clause.OnConflict{
+	if err := tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "client_id"}, {Name: "node_id"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"up":         gorm.Expr(database.ClampedAddExpr("up"), up),
 			"down":       gorm.Expr(database.ClampedAddExpr("down"), down),
 			"updated_at": now,
 		}),
-	}).Create(&row).Error
+	}).Create(&row).Error; err != nil {
+		return err
+	}
+	return markNodeQuotaExhaustedTx(tx, client.Id, nodeID, now)
+}
+
+func markNodeQuotaExhaustedTx(tx *gorm.DB, clientID, nodeID int, now int64) error {
+	var quota model.ClientNodeQuota
+	if err := tx.Where("client_id = ? AND node_id = ?", clientID, nodeID).Take(&quota).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if quota.TotalBytes <= 0 {
+		return nil
+	}
+
+	var usage model.ClientNodeUsage
+	if err := tx.Where("client_id = ? AND node_id = ?", clientID, nodeID).Take(&usage).Error; err != nil {
+		return err
+	}
+	// Compare without adding Up+Down so even two clamped near-int64 counters
+	// cannot overflow and accidentally look below quota.
+	exhausted := usage.Up >= quota.TotalBytes ||
+		usage.Down >= quota.TotalBytes ||
+		usage.Down >= quota.TotalBytes-usage.Up
+	if !exhausted {
+		return nil
+	}
+
+	var state model.ClientNodeAccessState
+	err := tx.Where("client_id = ? AND node_id = ?", clientID, nodeID).Take(&state).Error
+	if err == nil {
+		if state.Blocked && state.Reason == model.ClientNodeAccessReasonQuotaExhausted {
+			return nil
+		}
+		return tx.Model(&state).Updates(map[string]any{
+			"blocked":    true,
+			"reason":     model.ClientNodeAccessReasonQuotaExhausted,
+			"blocked_at": now,
+			"applied_at": 0,
+			"last_error": "",
+			"updated_at": now,
+		}).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return tx.Create(&model.ClientNodeAccessState{
+		ClientId:  clientID,
+		NodeId:    nodeID,
+		Blocked:   true,
+		Reason:    model.ClientNodeAccessReasonQuotaExhausted,
+		BlockedAt: now,
+		AppliedAt: 0,
+		UpdatedAt: now,
+	}).Error
 }
