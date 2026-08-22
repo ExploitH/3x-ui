@@ -210,6 +210,9 @@ func (s *ClientService) DeleteOrphans() (int, error) {
 		if e := clearClientHwidsBySubIDTx(tx, subIDs...); e != nil {
 			return e
 		}
+		if e := deleteClientNodeQuotaRowsTx(tx, ids); e != nil {
+			return e
+		}
 		for _, batch := range chunkInts(ids, sqlInChunk) {
 			if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientInbound{}).Error; e != nil {
 				return e
