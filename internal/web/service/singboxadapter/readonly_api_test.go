@@ -3,6 +3,8 @@ package singboxadapter
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -68,6 +70,56 @@ func TestReadOnlyHandlerRejectsMissingOrWrongTokenAndAllMutations(t *testing.T) 
 				t.Fatalf("status=%d body=%s want %d", resp.Code, resp.Body.String(), tc.want)
 			}
 		})
+	}
+}
+
+func TestReadOnlyHandlerReportsCapabilities(t *testing.T) {
+	h, err := NewReadOnlyHandler(ReadOnlyOptions{ConfigJSON: []byte(`{"inbounds":[]}`), Token: "secret", BasePath: "/adapter/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/adapter/panel/api/server/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !containsAll(body,
+		`"mode":"readonly"`,
+		`"config":true`,
+		`"inboundInventory":true`,
+		`"clientCrud":false`,
+		`"clientEnable":false`,
+		`"perClientTraffic":false`,
+		`"trafficReset":false`,
+		`"clientIp":false`,
+		`"relayIdentity":false`,
+	) {
+		t.Fatalf("capabilities body=%s", body)
+	}
+}
+
+func TestCapabilitiesReturnsUnavailableAfterConfigCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	valid := []byte(`{"inbounds":[{"type":"vless","tag":"stable","listen_port":443}]}`)
+	if err := os.WriteFile(path, valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewReadOnlyHandler(ReadOnlyOptions{ConfigPath: path, Token: "secret", BasePath: "/adapter/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"inbounds":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/adapter/panel/api/server/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
 

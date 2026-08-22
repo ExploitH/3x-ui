@@ -7,8 +7,27 @@ canary:
 ```text
 GET  <base>/healthz
 GET  <base>/panel/api/server/status
+GET  <base>/panel/api/server/capabilities
 GET  <base>/panel/api/inbounds/list
 ```
+
+The capability endpoint returns an explicit gate for the current adapter mode:
+
+```json
+{
+  "mode": "readonly",
+  "config": true,
+  "inboundInventory": true,
+  "clientCrud": false,
+  "clientEnable": false,
+  "perClientTraffic": false,
+  "trafficReset": false,
+  "clientIp": false,
+  "relayIdentity": false
+}
+```
+
+The Master must not enable a node while `perClientTraffic` is false.
 
 All requests require `Authorization: Bearer <token>`. Any mutation is rejected
 with HTTP 405. The adapter never writes the sing-box config, never restarts

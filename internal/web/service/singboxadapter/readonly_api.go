@@ -53,6 +53,30 @@ type ReadOnlyInbound struct {
 	Users    int    `json:"users"`
 }
 
+type ReadOnlyCapabilities struct {
+	Mode             string `json:"mode"`
+	Config           bool   `json:"config"`
+	InboundInventory bool   `json:"inboundInventory"`
+	ClientCrud       bool   `json:"clientCrud"`
+	ClientEnable     bool   `json:"clientEnable"`
+	PerClientTraffic bool   `json:"perClientTraffic"`
+	TrafficReset     bool   `json:"trafficReset"`
+	ClientIP         bool   `json:"clientIp"`
+	RelayIdentity    bool   `json:"relayIdentity"`
+}
+
+var readonlyCapabilities = ReadOnlyCapabilities{
+	Mode:             "readonly",
+	Config:           true,
+	InboundInventory: true,
+	ClientCrud:       false,
+	ClientEnable:     false,
+	PerClientTraffic: false,
+	TrafficReset:     false,
+	ClientIP:         false,
+	RelayIdentity:    false,
+}
+
 type readOnlyEnvelope struct {
 	Success bool   `json:"success"`
 	Msg     string `json:"msg,omitempty"`
@@ -114,6 +138,8 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleInboundList(w)
 	case "panel/api/server/status":
 		h.handleStatus(w)
+	case "panel/api/server/capabilities":
+		h.handleCapabilities(w)
 	case "healthz":
 		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"mode": "readonly"}})
 	default:
@@ -196,6 +222,14 @@ func (h *ReadOnlyHandler) handleStatus(w http.ResponseWriter) {
 		"uptime":       uint64(time.Since(h.startedAt).Seconds()),
 		"netIO":        map[string]any{"up": 0, "down": 0},
 	}})
+}
+
+func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
+	if _, err := h.loadConfig(); err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: readonlyCapabilities})
 }
 
 func (h *ReadOnlyHandler) panelGuid() string {
