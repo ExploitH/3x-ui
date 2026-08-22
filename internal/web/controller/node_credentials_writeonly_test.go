@@ -18,6 +18,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/locale"
+	"github.com/mhsanaei/3x-ui/v3/internal/web/runtime"
 )
 
 func newNodeCredentialTestEngine(t *testing.T) *gin.Engine {
@@ -28,6 +29,9 @@ func newNodeCredentialTestEngine(t *testing.T) *gin.Engine {
 	if err := database.InitDB(filepath.Join(dbDir, "x-ui.db")); err != nil {
 		t.Fatalf("InitDB: %v", err)
 	}
+	previousManager := runtime.GetManager()
+	runtime.SetManager(runtime.NewManager(runtime.LocalDeps{APIPort: func() int { return 0 }}))
+	t.Cleanup(func() { runtime.SetManager(previousManager) })
 	t.Cleanup(func() { _ = database.CloseDB() })
 
 	engine := gin.New()
@@ -119,6 +123,10 @@ func TestNodeControllerAddAcceptsTokenButReturnsView(t *testing.T) {
 	engine := newNodeCredentialTestEngine(t)
 
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/panel/api/server/capabilities" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path != "/panel/api/server/status" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -177,6 +185,10 @@ func TestNodeControllerUpdateBlankApiTokenKeepsStoredToken(t *testing.T) {
 	engine := newNodeCredentialTestEngine(t)
 
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/panel/api/server/capabilities" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path != "/panel/api/server/status" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}

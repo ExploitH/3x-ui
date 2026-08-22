@@ -144,6 +144,20 @@ func (a *NodeController) add(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if n.Enable {
+		runtimeNode, err := a.nodeService.RuntimeNodeFromRequest(0, n)
+		if err != nil {
+			jsonMsg(c, I18nWeb(c, "pages.nodes.toasts.add"), err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 6*time.Second)
+		err = a.nodeService.ValidateNodeEnable(ctx, runtimeNode)
+		cancel()
+		if err != nil {
+			jsonMsg(c, I18nWeb(c, "pages.nodes.toasts.add"), err)
+			return
+		}
+	}
 	if n.OutboundTag == "" {
 		if err := a.ensureReachable(c, n, 0); err != nil {
 			jsonMsg(c, I18nWeb(c, "pages.nodes.toasts.add"), err)

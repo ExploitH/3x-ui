@@ -500,6 +500,19 @@ func (s *NodeService) Update(id int, in *model.Node) error {
 	if err := db.Where("id = ?", id).First(existing).Error; err != nil {
 		return err
 	}
+	if in.Enable && !existing.Enable {
+		runtimeNode := *in
+		runtimeNode.Id = id
+		if runtimeNode.ApiToken == "" {
+			runtimeNode.ApiToken = existing.ApiToken
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		err = s.ValidateNodeEnable(ctx, &runtimeNode)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	// Blank means keep the hidden stored token; non-blank values are encrypted.
 	apiToken := existing.ApiToken
 	if in.ApiToken != "" {
@@ -555,6 +568,18 @@ func (s *NodeService) UpdateFromRequest(id int, req *NodeMutationRequest) error 
 	existing := &model.Node{}
 	if err := db.Where("id = ?", id).First(existing).Error; err != nil {
 		return err
+	}
+	if in.Enable && !existing.Enable {
+		runtimeNode, rerr := s.RuntimeNodeFromRequest(id, req)
+		if rerr != nil {
+			return rerr
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		rerr = s.ValidateNodeEnable(ctx, runtimeNode)
+		cancel()
+		if rerr != nil {
+			return rerr
+		}
 	}
 	apiToken := existing.ApiToken
 	switch {
@@ -891,22 +916,29 @@ func validateNodeEnableCapabilities(
 	return nil
 }
 
+func (s *NodeService) ValidateNodeEnable(ctx context.Context, n *model.Node) error {
+	if n == nil {
+		return errors.New("node is nil")
+	}
+	mgr := runtime.GetManager()
+	if mgr == nil {
+		return errors.New("runtime manager unavailable for node capability check")
+	}
+	remote, err := mgr.RemoteFor(n)
+	if err != nil {
+		return err
+	}
+	return validateNodeEnableCapabilities(ctx, remote)
+}
+
 func (s *NodeService) SetEnable(id int, enable bool) error {
 	if enable {
 		n, err := s.GetById(id)
 		if err != nil {
 			return err
 		}
-		mgr := runtime.GetManager()
-		if mgr == nil {
-			return errors.New("runtime manager unavailable for node capability check")
-		}
-		remote, err := mgr.RemoteFor(n)
-		if err != nil {
-			return err
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-		err = validateNodeEnableCapabilities(ctx, remote)
+		err = s.ValidateNodeEnable(ctx, n)
 		cancel()
 		if err != nil {
 			return err
