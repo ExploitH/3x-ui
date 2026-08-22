@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,22 +21,24 @@ import (
 const readonlyPanelVersion = "singbox-adapter-readonly"
 
 type ReadOnlyOptions struct {
-	ConfigPath      string
-	ConfigJSON      []byte
-	Token           string
-	BasePath        string
-	V2RayAPIAddress string
-	StatsProvider   TrafficStatsProvider
+	ConfigPath          string
+	ConfigJSON          []byte
+	Token               string
+	BasePath            string
+	V2RayAPIAddress     string
+	StatsProvider       TrafficStatsProvider
+	ManagedRelayMutator *ManagedRelayMutator
 }
 
 type ReadOnlyHandler struct {
-	token       []byte
-	basePath    string
-	configPath  string
-	configJSON  []byte
-	startedAt   time.Time
-	stats       TrafficStatsProvider
-	statsCloser func() error
+	token          []byte
+	basePath       string
+	configPath     string
+	configJSON     []byte
+	startedAt      time.Time
+	stats          TrafficStatsProvider
+	statsCloser    func() error
+	managedMutator *ManagedRelayMutator
 }
 
 type singboxConfig struct {
@@ -115,12 +120,13 @@ func NewReadOnlyHandler(options ReadOnlyOptions) (*ReadOnlyHandler, error) {
 		return nil, errors.New("sing-box adapter config path or config JSON is required")
 	}
 	h := &ReadOnlyHandler{
-		token:      []byte(normalizedToken),
-		basePath:   basePath,
-		configPath: options.ConfigPath,
-		configJSON: append([]byte(nil), options.ConfigJSON...),
-		startedAt:  time.Now(),
-		stats:      options.StatsProvider,
+		token:          []byte(normalizedToken),
+		basePath:       basePath,
+		configPath:     options.ConfigPath,
+		configJSON:     append([]byte(nil), options.ConfigJSON...),
+		startedAt:      time.Now(),
+		stats:          options.StatsProvider,
+		managedMutator: options.ManagedRelayMutator,
 	}
 	if h.stats == nil && strings.TrimSpace(options.V2RayAPIAddress) != "" {
 		client, err := dialV2RayStatsClient(context.Background(), strings.TrimSpace(options.V2RayAPIAddress))
@@ -167,11 +173,12 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeReadOnlyJSON(w, http.StatusUnauthorized, readOnlyEnvelope{Success: false, Msg: "unauthorized"})
 		return
 	}
-	if r.Method != http.MethodGet {
+	path := strings.TrimPrefix(r.URL.Path, h.basePath)
+	managedMutation := h.managedMutator != nil && r.Method == http.MethodPost && strings.HasPrefix(path, "panel/api/clients/update/")
+	if r.Method != http.MethodGet && !managedMutation {
 		writeReadOnlyJSON(w, http.StatusMethodNotAllowed, readOnlyEnvelope{Success: false, Msg: "read-only adapter"})
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, h.basePath)
 	switch path {
 	case "panel/api/inbounds/list":
 		h.handleInboundList(w)
@@ -184,6 +191,10 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "healthz":
 		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"mode": "readonly"}})
 	default:
+		if managedMutation {
+			h.handleManagedClientUpdate(w, r, path)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }
@@ -272,14 +283,83 @@ func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
 		return
 	}
 	caps := readonlyCapabilities
+	if h.managedMutator != nil {
+		caps.Mode = "managed-client-enable"
+		caps.ClientEnable = true
+	}
 	if h.stats != nil {
 		if _, err := buildTrafficPlan(cfg); err == nil {
-			caps.Mode = "traffic-readonly"
+			if h.managedMutator != nil {
+				caps.Mode = "managed-client-enable-traffic"
+			} else {
+				caps.Mode = "traffic-readonly"
+			}
 			caps.TrafficSource = "sing-box-v2ray-api"
 			caps.PerClientTraffic = true
 		}
 	}
 	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: caps})
+}
+
+func (h *ReadOnlyHandler) handleManagedClientUpdate(w http.ResponseWriter, r *http.Request, path string) {
+	const prefix = "panel/api/clients/update/"
+	email, err := url.PathUnescape(strings.TrimPrefix(path, prefix))
+	if err != nil || strings.TrimSpace(email) == "" {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client email"})
+		return
+	}
+	inboundIDs, err := parseInboundIDs(r.URL.Query().Get("inboundIds"))
+	if err != nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	if h.managedMutator == nil || h.managedMutator.State == nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: "managed relay state store is unavailable"})
+		return
+	}
+	state, err := h.managedMutator.State.Load(r.Context())
+	if err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	wantID := stableInboundID(state.InboundTag)
+	if len(inboundIDs) != 1 || inboundIDs[0] != wantID {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "inbound does not belong to managed relay"})
+		return
+	}
+	var payload struct {
+		Email  string `json:"email"`
+		Enable *bool  `json:"enable"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&payload); err != nil || payload.Enable == nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "client email and enable are required"})
+		return
+	}
+	if canonicalRelayEmail(payload.Email) != canonicalRelayEmail(email) {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "client email does not match path"})
+		return
+	}
+	if err := h.managedMutator.SetUserEnabled(r.Context(), email, *payload.Enable); err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "enable": *payload.Enable}})
+}
+
+func parseInboundIDs(raw string) ([]int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, errors.New("inboundIds is required")
+	}
+	parts := strings.Split(raw, ",")
+	ids := make([]int, 0, len(parts))
+	for _, part := range parts {
+		id, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || id <= 0 {
+			return nil, errors.New("inboundIds must contain positive integers")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (h *ReadOnlyHandler) panelGuid() string {

@@ -40,9 +40,12 @@ The capability becomes `mode=traffic-readonly` and `perClientTraffic=true`, but
 `clientCrud=false` and `clientEnable=false` remain false; the Master must not
 enable this Node as a full managed node.
 
-All requests require `Authorization: Bearer <token>`. Any mutation is rejected
-with HTTP 405. The adapter never writes the sing-box config, never restarts
-sing-box, and never exposes user UUID/password fields.
+All requests require `Authorization: Bearer ***`. The default command wiring rejects
+mutations with HTTP 405. The library has an explicit, non-default managed-client
+enable seam, but `cmd/singbox-adapter` does not construct it yet; enabling that seam
+requires a later production canary with a canonical managed-state file, atomic
+config rollback, sing-box validation, reload, and health callbacks. The adapter
+never exposes user UUID/password fields in API responses.
 
 ## Build
 
@@ -85,7 +88,9 @@ Before starting it on HK3:
 7. Roll back by stopping/disabling only `singbox-adapter.service` and removing
    its files.
 
-This slice does not yet provide client CRUD, enable/disable, traffic reset, or
-provider billing import. Traffic snapshot is read-only and requires the
-explicit V2Ray API configuration described above. Relay-to-exit identity
-propagation remains a separate gate.
+The default deployed command does not yet provide client CRUD, enable/disable,
+traffic reset, or provider billing import. The library contains only an opt-in
+client-enable seam for a later managed canary; the default process remains
+read-only. Traffic snapshot is read-only and requires the explicit V2Ray API
+configuration described above. Relay-to-exit identity propagation remains a
+separate gate.
