@@ -58,6 +58,10 @@ func migrationModels() []any {
 		&model.ClientNodeUsage{},
 		&model.ClientNodeAccessState{},
 		&model.NodeClientIp{},
+		&model.NodeCostProfile{},
+		&model.InfrastructureCost{},
+		&model.NodeTrafficCycle{},
+		&model.BillingFxRate{},
 		&model.ClientGlobalTraffic{},
 		&model.OutboundSubscription{},
 	}
