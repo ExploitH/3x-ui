@@ -76,6 +76,11 @@ func TestCalculateMonthlyBillingSeparatesCurrenciesAndAmortizesAnnualCosts(t *te
 	if got.TotalCurrencyCount() != 2 {
 		t.Fatalf("currency count=%d, want 2", got.TotalCurrencyCount())
 	}
+	for _, line := range got.Lines {
+		if line.Key == "" {
+			t.Fatalf("billing line missing stable key: %+v", line)
+		}
+	}
 }
 
 func TestCalculateMonthlyBillingDoesNotTreatHeartbeatAsProviderBilling(t *testing.T) {

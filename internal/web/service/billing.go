@@ -21,6 +21,7 @@ type BillingCurrencySummary struct {
 }
 
 type BillingLine struct {
+	Key          string `json:"key"`
 	Category     string `json:"category"`
 	Name         string `json:"name"`
 	Currency     string `json:"currency"`
@@ -147,7 +148,7 @@ func CalculateMonthlyBilling(db *gorm.DB, asOf int64) (MonthlyBillingSummary, er
 			overage = overageMinor(cycle.ProviderBillableBytes, profile.IncludedTrafficBytes, profile.OveragePriceMinorPerGB)
 		}
 		addBillingLine(&summary, BillingLine{
-			Category: "vps", Name: "node:" + strconv.Itoa(nodeID), Currency: profile.Currency,
+			Key: "vps:node:" + strconv.Itoa(nodeID), Category: "vps", Name: "node:" + strconv.Itoa(nodeID), Currency: profile.Currency,
 			BaseMinor: base, OverageMinor: overage, Source: profile.Provider,
 		})
 	}
@@ -159,7 +160,7 @@ func CalculateMonthlyBilling(db *gorm.DB, asOf int64) (MonthlyBillingSummary, er
 	}
 	for _, cost := range infra {
 		addBillingLine(&summary, BillingLine{
-			Category: cost.Type, Name: cost.Name, Currency: cost.Currency,
+			Key: "infrastructure:" + strconv.Itoa(cost.Id), Category: cost.Type, Name: cost.Name, Currency: cost.Currency,
 			BaseMinor: monthlyAmortizedMinor(cost.AmountMinor, cost.BillingCycle), Source: "infrastructure_costs",
 		})
 	}

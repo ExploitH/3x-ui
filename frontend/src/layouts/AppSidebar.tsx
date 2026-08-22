@@ -63,7 +63,8 @@ type IconName =
   | 'logout'
   | 'apidocs'
   | 'outbound'
-  | 'routing';
+  | 'routing'
+  | 'billing';
 
 const iconByName: Record<IconName, ComponentType> = {
   dashboard: DashboardOutlined,
@@ -78,6 +79,7 @@ const iconByName: Record<IconName, ComponentType> = {
   apidocs: ApiOutlined,
   outbound: ExportOutlined,
   routing: SwapOutlined,
+  billing: DatabaseOutlined,
 };
 
 function DonateButton({ ariaLabel }: { ariaLabel: string }) {
@@ -217,6 +219,7 @@ export default function AppSidebar() {
       { key: '/clients', icon: 'team', title: t('menu.clients') },
       { key: '/groups', icon: 'groups', title: t('menu.groups') },
       { key: '/nodes', icon: 'cluster', title: t('menu.nodes') },
+      { key: '/billing', icon: 'billing', title: t('menu.billing', { defaultValue: 'Billing' }) },
       { key: '/hosts', icon: 'hosts', title: t('menu.hosts') },
       { key: '/outbound', icon: 'outbound', title: t('menu.outbounds') },
       { key: '/routing', icon: 'routing', title: t('menu.routing') },
