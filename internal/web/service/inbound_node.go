@@ -920,6 +920,9 @@ func (s *InboundService) setRemoteTrafficLocked(nodeID int, snap *runtime.Traffi
 					return false, err
 				}
 			}
+			if err := addClientNodeUsageDeltaTx(tx, nodeID, cs.Email, deltaUp, deltaDown, now); err != nil {
+				return false, err
+			}
 			if err := s.upsertNodeBaseline(tx, nodeID, cs.Email, canon.Up, canon.Down); err != nil {
 				return false, err
 			}
