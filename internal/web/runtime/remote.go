@@ -59,6 +59,10 @@ var ErrCapabilitiesUnsupported = errors.New("remote node does not expose capabil
 // endpoint is not available on the remote node.
 var ErrSingboxTrafficUnsupported = errors.New("remote node does not expose sing-box traffic snapshot")
 
+// ErrManagedSingboxTrafficUnsupported means the remote node is not a fully
+// managed per-client traffic source (for example, a traffic-readonly adapter).
+var ErrManagedSingboxTrafficUnsupported = errors.New("remote node does not expose managed sing-box traffic")
+
 // readCappedBody reads all of r but rejects bodies larger than limit, returning
 // errRemoteResponseTooLarge. It reads at most limit+1 bytes so a body of exactly
 // limit is accepted and the first oversize byte is detected without buffering
@@ -90,6 +94,7 @@ type Remote struct {
 	node *model.Node
 
 	mu             sync.RWMutex
+	capabilityMu   sync.Mutex
 	remoteIDByTag  map[string]int
 	adoptedAliases map[string]string
 	// pushedFP holds the fingerprint of the last inbound wire payload successfully
@@ -107,8 +112,14 @@ type Remote struct {
 	client     *http.Client
 	clientErr  error
 
+	capabilitiesAt  time.Time
+	capabilities    *NodeCapabilities
+	capabilitiesErr error
+
 	egressResolver NodeEgressResolver
 }
+
+const remoteCapabilitiesCacheTTL = 60 * time.Second
 
 type RemoteInboundOption struct {
 	Id       int            `json:"id"`
@@ -743,6 +754,37 @@ func (r *Remote) FetchCapabilities(ctx context.Context) (*NodeCapabilities, erro
 		return nil, errors.New("remote capabilities mode is empty")
 	}
 	return &caps, nil
+}
+
+func (r *Remote) FetchCapabilitiesCached(ctx context.Context) (*NodeCapabilities, error) {
+	now := time.Now()
+	r.capabilityMu.Lock()
+	if !r.capabilitiesAt.IsZero() && now.Sub(r.capabilitiesAt) < remoteCapabilitiesCacheTTL {
+		caps, err := r.capabilities, r.capabilitiesErr
+		r.capabilityMu.Unlock()
+		return caps, err
+	}
+	caps, err := r.FetchCapabilities(ctx)
+	if err != nil && !errors.Is(err, ErrCapabilitiesUnsupported) {
+		r.capabilityMu.Unlock()
+		return nil, err
+	}
+	r.capabilitiesAt = now
+	r.capabilities = caps
+	r.capabilitiesErr = err
+	r.capabilityMu.Unlock()
+	return caps, err
+}
+
+func (r *Remote) FetchManagedSingboxTrafficSnapshot(ctx context.Context) (*SingboxTrafficSnapshot, error) {
+	caps, err := r.FetchCapabilitiesCached(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if caps == nil || !caps.ClientCrud || !caps.ClientEnable || !caps.PerClientTraffic {
+		return nil, ErrManagedSingboxTrafficUnsupported
+	}
+	return r.FetchSingboxTrafficSnapshot(ctx)
 }
 
 type TrafficSnapshot struct {
