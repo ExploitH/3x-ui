@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -53,6 +54,10 @@ var errRemoteResponseTooLarge = errors.New("remote response exceeds size limit")
 // and has no capability-discovery endpoint. Legacy nodes remain compatible; a
 // successful capability response is authoritative for newer adapters.
 var ErrCapabilitiesUnsupported = errors.New("remote node does not expose capabilities")
+
+// ErrSingboxTrafficUnsupported means the optional sing-box traffic snapshot
+// endpoint is not available on the remote node.
+var ErrSingboxTrafficUnsupported = errors.New("remote node does not expose sing-box traffic snapshot")
 
 // readCappedBody reads all of r but rejects bodies larger than limit, returning
 // errRemoteResponseTooLarge. It reads at most limit+1 bytes so a body of exactly
@@ -759,6 +764,100 @@ type TrafficSnapshot struct {
 	// HostGroups carries the node's per-inbound host overrides (TLS/SNI/
 	// fingerprint), fetched only when the snapshot holds a not-yet-adopted tag.
 	HostGroups []*entity.HostGroup
+}
+
+const singboxTrafficSource = "sing-box-v2ray-api"
+
+type SingboxTrafficSnapshot struct {
+	Source     string                  `json:"source"`
+	CapturedAt time.Time               `json:"capturedAt"`
+	Users      []SingboxUserTraffic    `json:"users"`
+	Inbounds   []SingboxInboundTraffic `json:"inbounds"`
+}
+
+type SingboxUserTraffic struct {
+	Name     string `json:"name"`
+	Uplink   int64  `json:"uplink"`
+	Downlink int64  `json:"downlink"`
+	Total    int64  `json:"total"`
+}
+
+type SingboxInboundTraffic struct {
+	Tag      string `json:"tag"`
+	Uplink   int64  `json:"uplink"`
+	Downlink int64  `json:"downlink"`
+	Total    int64  `json:"total"`
+}
+
+// FetchSingboxTrafficSnapshot reads and validates the optional adapter snapshot.
+// It deliberately does not update NodeClientTraffic or invoke any reset API.
+func (r *Remote) FetchSingboxTrafficSnapshot(ctx context.Context) (*SingboxTrafficSnapshot, error) {
+	env, err := r.do(ctx, http.MethodGet, "panel/api/traffic/snapshot", nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 404") {
+			return nil, fmt.Errorf("%w: %w", ErrSingboxTrafficUnsupported, err)
+		}
+		return nil, err
+	}
+	if len(env.Obj) == 0 {
+		return nil, errors.New("sing-box traffic snapshot response is empty")
+	}
+	var snapshot SingboxTrafficSnapshot
+	if err := json.Unmarshal(env.Obj, &snapshot); err != nil {
+		return nil, fmt.Errorf("decode sing-box traffic snapshot: %w", err)
+	}
+	if err := validateSingboxTrafficSnapshot(&snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+func validateSingboxTrafficSnapshot(snapshot *SingboxTrafficSnapshot) error {
+	if snapshot == nil {
+		return errors.New("sing-box traffic snapshot is nil")
+	}
+	if snapshot.Source != singboxTrafficSource {
+		return fmt.Errorf("unexpected sing-box traffic snapshot source %q", snapshot.Source)
+	}
+	if snapshot.CapturedAt.IsZero() {
+		return errors.New("sing-box traffic snapshot capturedAt is missing")
+	}
+	seenUsers := make(map[string]struct{}, len(snapshot.Users))
+	for i := range snapshot.Users {
+		row := &snapshot.Users[i]
+		if err := validateSingboxTrafficRow(row.Name, row.Uplink, row.Downlink, row.Total, "user", seenUsers); err != nil {
+			return err
+		}
+	}
+	seenInbounds := make(map[string]struct{}, len(snapshot.Inbounds))
+	for i := range snapshot.Inbounds {
+		row := &snapshot.Inbounds[i]
+		if err := validateSingboxTrafficRow(row.Tag, row.Uplink, row.Downlink, row.Total, "inbound", seenInbounds); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSingboxTrafficRow(name string, uplink, downlink, total int64, kind string, seen map[string]struct{}) error {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, ">>>") {
+		return fmt.Errorf("invalid sing-box %s identity %q", kind, name)
+	}
+	if _, exists := seen[name]; exists {
+		return fmt.Errorf("duplicate sing-box %s identity %q", kind, name)
+	}
+	seen[name] = struct{}{}
+	if uplink < 0 || downlink < 0 || total < 0 {
+		return fmt.Errorf("negative sing-box %s traffic counter %q", kind, name)
+	}
+	if downlink > math.MaxInt64-uplink {
+		return fmt.Errorf("sing-box %s traffic counter overflow %q", kind, name)
+	}
+	if total != uplink+downlink {
+		return fmt.Errorf("sing-box %s traffic total mismatch for %q", kind, name)
+	}
+	return nil
 }
 
 // FetchHostGroups pulls the node's host overrides so a freshly adopted inbound
