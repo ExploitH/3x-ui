@@ -38,6 +38,23 @@ func NewManagedConfigStore(path string) *ManagedConfigStore {
 	return &ManagedConfigStore{path: filepath.Clean(strings.TrimSpace(path))}
 }
 
+func (s *ManagedConfigStore) Read(ctx context.Context) ([]byte, error) {
+	if s == nil || s.path == "" || s.path == "." {
+		return nil, errors.New("managed config path is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ensureRegularNonSymlink(s.path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return nil, fmt.Errorf("read managed config: %w", err)
+	}
+	return data, nil
+}
+
 // ApplyWithSingBoxCheck is the production-facing convenience path: a candidate
 // cannot be installed unless the exact configured sing-box binary accepts it.
 func (s *ManagedConfigStore) ApplyWithSingBoxCheck(ctx context.Context, candidate []byte, binaryPath string) (*ManagedConfigRollback, error) {
