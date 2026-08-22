@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
+	"github.com/mhsanaei/3x-ui/v3/internal/logger"
+	"github.com/mhsanaei/3x-ui/v3/internal/util/common"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/runtime"
+	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -306,26 +310,28 @@ func restoreNodeQuotaSnapshotDesiredState(
 // attached to the matching physical node. It deliberately performs network I/O
 // after the accounting transaction and never mutates canonical/global enable.
 func (s *InboundService) ApplyPendingNodeQuotaBlocks(ctx context.Context) error {
-	return s.applyPendingNodeQuotaBlocks(ctx, 0)
+	return s.applyPendingNodeQuotaMutations(ctx, 0, 0)
 }
 
 func (s *InboundService) ApplyPendingNodeQuotaBlocksForNode(ctx context.Context, nodeID int) error {
 	if nodeID <= 0 {
 		return fmt.Errorf("invalid node id %d", nodeID)
 	}
-	return s.applyPendingNodeQuotaBlocks(ctx, nodeID)
+	return s.applyPendingNodeQuotaMutations(ctx, nodeID, 0)
 }
 
-func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNodeID int) error {
+func (s *InboundService) applyPendingNodeQuotaMutations(ctx context.Context, onlyNodeID, onlyClientID int) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	db := database.GetDB()
 	var states []model.ClientNodeAccessState
-	query := db.Where("blocked = ? AND reason = ? AND applied_at = 0",
-		true, model.ClientNodeAccessReasonQuotaExhausted)
+	query := db.Where("reason = ? AND applied_at = 0", model.ClientNodeAccessReasonQuotaExhausted)
 	if onlyNodeID > 0 {
 		query = query.Where("node_id = ?", onlyNodeID)
+	}
+	if onlyClientID > 0 {
+		query = query.Where("client_id = ?", onlyClientID)
 	}
 	if err := query.Order("node_id ASC, client_id ASC").Find(&states).Error; err != nil {
 		return err
@@ -338,8 +344,27 @@ func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNo
 		if err := db.Where("id = ?", state.ClientId).Take(&record).Error; err != nil {
 			applyErr := fmt.Errorf("node %d client %d: load canonical client: %w", state.NodeId, state.ClientId, err)
 			allErrs = append(allErrs, applyErr)
-			_ = recordNodeQuotaApplyResult(db, state.Id, 0, applyErr)
+			if persistErr := recordNodeQuotaApplyResult(db, state.Id, state.Blocked, 0, applyErr); persistErr != nil {
+				allErrs = append(allErrs, persistErr)
+			}
 			continue
+		}
+		if !state.Blocked {
+			restoreAllowed, err := clientNodeRestoreAllowed(db, &record)
+			if err != nil {
+				applyErr := fmt.Errorf("node %d client %q: check global restore state: %w", state.NodeId, record.Email, err)
+				allErrs = append(allErrs, applyErr)
+				if persistErr := recordNodeQuotaApplyResult(db, state.Id, false, 0, applyErr); persistErr != nil {
+					allErrs = append(allErrs, persistErr)
+				}
+				continue
+			}
+			if !restoreAllowed {
+				if persistErr := recordNodeQuotaApplyResult(db, state.Id, false, time.Now().UnixMilli(), nil); persistErr != nil {
+					allErrs = append(allErrs, persistErr)
+				}
+				continue
+			}
 		}
 
 		var inbounds []*model.Inbound
@@ -350,7 +375,9 @@ func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNo
 			Find(&inbounds).Error; err != nil {
 			applyErr := fmt.Errorf("node %d client %q: load matching inbounds: %w", state.NodeId, record.Email, err)
 			allErrs = append(allErrs, applyErr)
-			_ = recordNodeQuotaApplyResult(db, state.Id, 0, applyErr)
+			if persistErr := recordNodeQuotaApplyResult(db, state.Id, state.Blocked, 0, applyErr); persistErr != nil {
+				allErrs = append(allErrs, persistErr)
+			}
 			continue
 		}
 
@@ -362,16 +389,26 @@ func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNo
 				continue
 			}
 			var payload *model.Client
+			matched := false
 			for j := range clients {
 				if strings.EqualFold(strings.TrimSpace(clients[j].Email), strings.TrimSpace(record.Email)) {
+					matched = true
 					copyClient := clients[j]
-					copyClient.Enable = false
-					payload = &copyClient
+					if state.Blocked {
+						copyClient.Enable = false
+						payload = &copyClient
+					} else if copyClient.Enable {
+						payload = &copyClient
+					}
 					break
 				}
 			}
-			if payload == nil {
+			if !matched {
 				stateErrs = append(stateErrs, fmt.Errorf("inbound %q: client %q missing from settings", inbound.Tag, record.Email))
+				continue
+			}
+			// A node restore never overrides a per-inbound/manual disabled flag.
+			if payload == nil {
 				continue
 			}
 			rt, push, pending, err := s.nodePushPlan(inbound)
@@ -388,7 +425,11 @@ func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNo
 				continue
 			}
 			if err := rt.UpdateUser(ctx, inbound, record.Email, *payload); err != nil {
-				stateErrs = append(stateErrs, fmt.Errorf("inbound %q: disable client: %w", inbound.Tag, err))
+				action := "disable"
+				if !state.Blocked {
+					action = "restore"
+				}
+				stateErrs = append(stateErrs, fmt.Errorf("inbound %q: %s client: %w", inbound.Tag, action, err))
 			}
 		}
 
@@ -398,14 +439,217 @@ func (s *InboundService) applyPendingNodeQuotaBlocks(ctx context.Context, onlyNo
 			appliedAt = 0
 			allErrs = append(allErrs, fmt.Errorf("node %d client %q: %w", state.NodeId, record.Email, applyErr))
 		}
-		if err := recordNodeQuotaApplyResult(db, state.Id, appliedAt, applyErr); err != nil {
+		if err := recordNodeQuotaApplyResult(db, state.Id, state.Blocked, appliedAt, applyErr); err != nil {
 			allErrs = append(allErrs, err)
 		}
 	}
 	return errors.Join(allErrs...)
 }
 
-func recordNodeQuotaApplyResult(db *gorm.DB, stateID int, appliedAt int64, applyErr error) error {
+func clientNodeRestoreAllowed(db *gorm.DB, record *model.ClientRecord) (bool, error) {
+	if db == nil || record == nil || !record.Enable {
+		return false, nil
+	}
+	var traffic xray.ClientTraffic
+	if err := db.Where("email = ?", record.Email).Take(&traffic).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !traffic.Enable {
+		return false, nil
+	}
+	cond, args := depletedCond(db)
+	var invalid int64
+	if err := db.Model(&xray.ClientTraffic{}).
+		Where("email = ?", record.Email).
+		Where(cond, args...).
+		Count(&invalid).Error; err != nil {
+		return false, err
+	}
+	return invalid == 0, nil
+}
+
+// ResetClientNodeTraffic starts a fresh quota cycle for one client on one
+// physical node. Raw NodeClientTraffic baselines are intentionally preserved so
+// the next node snapshot adds only traffic produced after this reset.
+func (s *InboundService) ResetClientNodeTraffic(ctx context.Context, email string, nodeID int) (bool, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return false, common.NewError("client email is required")
+	}
+	if nodeID <= 0 {
+		return false, common.NewError("invalid node id")
+	}
+
+	var clientID int
+	needsApply := false
+	err := submitTrafficWrite(func() error {
+		db := database.GetDB()
+		return db.Transaction(func(tx *gorm.DB) error {
+			var record model.ClientRecord
+			if err := tx.Where("email = ?", email).Take(&record).Error; err != nil {
+				return err
+			}
+			clientID = record.Id
+			now := time.Now().UnixMilli()
+			if err := tx.Model(&model.ClientNodeUsage{}).
+				Where("client_id = ? AND node_id = ?", clientID, nodeID).
+				Updates(map[string]any{
+					"up":               0,
+					"down":             0,
+					"cycle_started_at": now,
+					"updated_at":       now,
+				}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.ClientNodeQuota{}).
+				Where("client_id = ? AND node_id = ?", clientID, nodeID).
+				Updates(map[string]any{"last_reset_at": now, "updated_at": now}).Error; err != nil {
+				return err
+			}
+
+			var state model.ClientNodeAccessState
+			err := tx.Where("client_id = ? AND node_id = ?", clientID, nodeID).Take(&state).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if state.Reason != model.ClientNodeAccessReasonQuotaExhausted {
+				return nil
+			}
+			if !state.Blocked {
+				needsApply = state.AppliedAt == 0
+				return nil
+			}
+			if err := tx.Model(&state).Updates(map[string]any{
+				"blocked":    false,
+				"applied_at": 0,
+				"last_error": "",
+				"updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+			needsApply = true
+			return (&NodeService{}).MarkNodeDirtyTx(tx, nodeID)
+		})
+	})
+	if err != nil {
+		return false, err
+	}
+	if !needsApply {
+		return false, nil
+	}
+	if err := s.applyPendingNodeQuotaMutations(ctx, nodeID, clientID); err != nil {
+		logger.Warningf("ResetClientNodeTraffic: node %d client %q restore pending: %v", nodeID, email, err)
+		return true, nil
+	}
+	var pending int64
+	if err := database.GetDB().Model(&model.ClientNodeAccessState{}).
+		Where("client_id = ? AND node_id = ? AND blocked = ? AND reason = ? AND applied_at = 0",
+			clientID, nodeID, false, model.ClientNodeAccessReasonQuotaExhausted).
+		Count(&pending).Error; err != nil {
+		return false, err
+	}
+	return pending > 0, nil
+}
+
+// ResetAllClientNodeTraffic starts a fresh node-quota cycle on every physical
+// node configured for one client. Global ClientTraffic counters and raw node
+// baselines are deliberately untouched.
+func (s *InboundService) ResetAllClientNodeTraffic(ctx context.Context, email string) ([]int, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil, common.NewError("client email is required")
+	}
+
+	var clientID int
+	nodeSet := map[int]struct{}{}
+	err := submitTrafficWrite(func() error {
+		db := database.GetDB()
+		return db.Transaction(func(tx *gorm.DB) error {
+			var record model.ClientRecord
+			if err := tx.Where("email = ?", email).Take(&record).Error; err != nil {
+				return err
+			}
+			clientID = record.Id
+			now := time.Now().UnixMilli()
+			if err := tx.Model(&model.ClientNodeUsage{}).
+				Where("client_id = ?", clientID).
+				Updates(map[string]any{
+					"up":               0,
+					"down":             0,
+					"cycle_started_at": now,
+					"updated_at":       now,
+				}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.ClientNodeQuota{}).
+				Where("client_id = ?", clientID).
+				Updates(map[string]any{"last_reset_at": now, "updated_at": now}).Error; err != nil {
+				return err
+			}
+
+			var states []model.ClientNodeAccessState
+			if err := tx.Where("client_id = ? AND reason = ?", clientID, model.ClientNodeAccessReasonQuotaExhausted).
+				Order("node_id ASC").Find(&states).Error; err != nil {
+				return err
+			}
+			for i := range states {
+				state := &states[i]
+				if !state.Blocked {
+					if state.AppliedAt == 0 {
+						nodeSet[state.NodeId] = struct{}{}
+					}
+					continue
+				}
+				if err := tx.Model(state).Updates(map[string]any{
+					"blocked":    false,
+					"applied_at": 0,
+					"last_error": "",
+					"updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+				if err := (&NodeService{}).MarkNodeDirtyTx(tx, state.NodeId); err != nil {
+					return err
+				}
+				nodeSet[state.NodeId] = struct{}{}
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	nodeIDs := make([]int, 0, len(nodeSet))
+	for nodeID := range nodeSet {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	sort.Ints(nodeIDs)
+	for _, nodeID := range nodeIDs {
+		if err := s.applyPendingNodeQuotaMutations(ctx, nodeID, clientID); err != nil {
+			logger.Warningf("ResetAllClientNodeTraffic: node %d client %q restore pending: %v", nodeID, email, err)
+		}
+	}
+
+	var pending []int
+	if err := database.GetDB().Model(&model.ClientNodeAccessState{}).
+		Distinct("node_id").
+		Where("client_id = ? AND blocked = ? AND reason = ? AND applied_at = 0",
+			clientID, false, model.ClientNodeAccessReasonQuotaExhausted).
+		Pluck("node_id", &pending).Error; err != nil {
+		return nil, err
+	}
+	sort.Ints(pending)
+	return pending, nil
+}
+
+func recordNodeQuotaApplyResult(db *gorm.DB, stateID int, blocked bool, appliedAt int64, applyErr error) error {
 	message := ""
 	if applyErr != nil {
 		message = applyErr.Error()
@@ -415,7 +659,7 @@ func recordNodeQuotaApplyResult(db *gorm.DB, stateID int, appliedAt int64, apply
 		}
 	}
 	return db.Model(&model.ClientNodeAccessState{}).
-		Where("id = ? AND blocked = ? AND reason = ?", stateID, true, model.ClientNodeAccessReasonQuotaExhausted).
+		Where("id = ? AND blocked = ? AND reason = ?", stateID, blocked, model.ClientNodeAccessReasonQuotaExhausted).
 		Updates(map[string]any{
 			"applied_at": appliedAt,
 			"last_error": message,
