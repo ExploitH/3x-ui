@@ -38,6 +38,14 @@ func NewManagedConfigStore(path string) *ManagedConfigStore {
 	return &ManagedConfigStore{path: filepath.Clean(strings.TrimSpace(path))}
 }
 
+// ApplyWithSingBoxCheck is the production-facing convenience path: a candidate
+// cannot be installed unless the exact configured sing-box binary accepts it.
+func (s *ManagedConfigStore) ApplyWithSingBoxCheck(ctx context.Context, candidate []byte, binaryPath string) (*ManagedConfigRollback, error) {
+	return s.Apply(ctx, candidate, func(validateCtx context.Context, candidatePath string) error {
+		return ValidateSingBoxConfig(validateCtx, binaryPath, candidatePath)
+	})
+}
+
 type ManagedConfigRollback struct {
 	mu         sync.Mutex
 	path       string
