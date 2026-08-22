@@ -1679,32 +1679,54 @@ func (s *InboundService) buildInboundForNodePush(tx *gorm.DB, inbound *model.Inb
 	if inbound == nil {
 		return nil, fmt.Errorf("inbound is nil")
 	}
+	var blocked map[string]bool
+	if inbound.NodeID != nil && *inbound.NodeID > 0 {
+		var err error
+		blocked, err = nodeQuotaBlockOverrides(tx, *inbound.NodeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.buildInboundForNodePushWithQuota(tx, inbound, blocked)
+}
+
+func (s *InboundService) buildInboundForNodePushWithQuota(tx *gorm.DB, inbound *model.Inbound, blocked map[string]bool) (*model.Inbound, error) {
+	if inbound == nil {
+		return nil, fmt.Errorf("inbound is nil")
+	}
 
 	built := *inbound
 	settings := map[string]any{}
 	if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
 		return nil, err
 	}
+	changed := false
 
-	if !inboundCanHostFallbacks(inbound) {
+	// Keep the master's canonical settings untouched while projecting
+	// node-local quota blocks into this node's desired wire payload.
+	changed = rewriteClientEnableMap(settings, blocked) || changed
+
+	if inboundCanHostFallbacks(inbound) {
+		fallbacks, err := s.fallbackService.BuildFallbacksJSON(tx, inbound.Id)
+		if err != nil {
+			return nil, err
+		}
+		if len(fallbacks) > 0 {
+			generic := make([]any, 0, len(fallbacks))
+			for _, f := range fallbacks {
+				generic = append(generic, f)
+			}
+			settings["fallbacks"] = generic
+			changed = true
+		}
+	}
+
+	if !changed {
 		return &built, nil
 	}
-	fallbacks, err := s.fallbackService.BuildFallbacksJSON(tx, inbound.Id)
+	modifiedSettings, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return nil, err
-	}
-	if len(fallbacks) == 0 {
-		return &built, nil
-	}
-	generic := make([]any, 0, len(fallbacks))
-	for _, f := range fallbacks {
-		generic = append(generic, f)
-	}
-	settings["fallbacks"] = generic
-
-	modifiedSettings, mErr := json.MarshalIndent(settings, "", "  ")
-	if mErr != nil {
-		return nil, mErr
 	}
 	built.Settings = string(modifiedSettings)
 	return &built, nil

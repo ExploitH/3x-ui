@@ -414,6 +414,17 @@ func (j *NodeTrafficSyncJob) syncOne(mgr *runtime.Manager, n *model.Node, doIpSy
 	if changed {
 		j.structural.set()
 	}
+
+	// The traffic merge above can create a node-quota block. Apply that state
+	// immediately to this physical node; failures keep applied_at=0 and retry on
+	// the next tick, while the node's dirty reconcile remains the full-config
+	// self-heal path.
+	quotaCtx, quotaCancel := context.WithTimeout(context.Background(), nodeReconcileTimeout)
+	if quotaErr := j.inboundService.ApplyPendingNodeQuotaBlocksForNode(quotaCtx, n.Id); quotaErr != nil {
+		logger.Warningf("node traffic sync: apply node quota blocks for %s failed: %v", n.Name, quotaErr)
+	}
+	quotaCancel()
+
 	if !dirty && n.InboundsAdoptedAt == 0 {
 		if markErr := j.nodeService.MarkNodeInboundsAdopted(n.Id); markErr != nil {
 			logger.Warningf("node traffic sync: mark inbounds adopted for %s failed: %v", n.Name, markErr)

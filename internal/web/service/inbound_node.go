@@ -96,6 +96,10 @@ func (s *InboundService) ReconcileNode(ctx context.Context, rt *runtime.Remote, 
 	if err := db.Model(model.Inbound{}).Where("node_id = ?", nodeID).Find(&inbounds).Error; err != nil {
 		return err
 	}
+	blockedClients, err := nodeQuotaBlockOverrides(db, nodeID)
+	if err != nil {
+		return err
+	}
 	remoteInbounds, err := rt.ListInboundOptions(ctx)
 	if err != nil {
 		return err
@@ -127,9 +131,10 @@ func (s *InboundService) ReconcileNode(ctx context.Context, rt *runtime.Remote, 
 				}
 			}
 		}
-		runtimeIb := ib
-		if built, bErr := s.buildInboundForNodePush(db, ib); bErr == nil {
-			runtimeIb = built
+		runtimeIb, bErr := s.buildInboundForNodePushWithQuota(db, ib, blockedClients)
+		if bErr != nil {
+			errs = append(errs, fmt.Errorf("build inbound %q: %w", ib.Tag, bErr))
+			continue
 		}
 		if !existsOnNode && n.Guid != "" && ib.OriginNodeGuid == n.Guid {
 			var compatible []runtime.RemoteInboundOption
@@ -436,6 +441,13 @@ func (s *InboundService) setRemoteTrafficLocked(nodeID int, snap *runtime.Traffi
 	for i := range centralClientStats {
 		centralCS[csKey{centralClientStats[i].InboundId, centralClientStats[i].Email}] = &centralClientStats[i]
 		centralCSByEmail[centralClientStats[i].Email] = &centralClientStats[i]
+	}
+	globalDesired := make(map[string]bool, len(centralCSByEmail))
+	for email, traffic := range centralCSByEmail {
+		globalDesired[strings.ToLower(strings.TrimSpace(email))] = traffic.Enable
+	}
+	if err := restoreNodeQuotaSnapshotDesiredState(db, nodeID, snap, tagToCentral, globalDesired); err != nil {
+		return false, err
 	}
 
 	nodeBaselines := make(map[string]nodeTrafficCounter)

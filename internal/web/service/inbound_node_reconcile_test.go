@@ -352,6 +352,43 @@ func TestReconcileNode_IncompatiblePortOccupantRemainsLoud(t *testing.T) {
 	}
 }
 
+func TestReconcileNode_DoesNotPushCanonicalInboundWhenBuildFails(t *testing.T) {
+	setupConflictDB(t)
+
+	var mu sync.Mutex
+	updates := 0
+	writeOK := func(w http.ResponseWriter, obj any) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "msg": "", "obj": obj})
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/panel/api/inbounds/list", func(w http.ResponseWriter, _ *http.Request) {
+		writeOK(w, []map[string]any{{"id": 1, "tag": "broken-build"}})
+	})
+	mux.HandleFunc("/panel/api/inbounds/update/", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		updates++
+		mu.Unlock()
+		writeOK(w, nil)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	node := reconcileTestNode(t, ts, "build-failure-node", "all", nil)
+	seedInboundConflictNode(t, "broken-build", "", 9443, model.VLESS, `{"network":"tcp"}`, `{`, &node.Id)
+
+	err := (&InboundService{}).ReconcileNode(context.Background(), runtime.NewRemote(node, nil), node)
+	if err == nil || !strings.Contains(err.Error(), `build inbound "broken-build"`) {
+		t.Fatalf("ReconcileNode error = %v, want a build error naming the inbound", err)
+	}
+	mu.Lock()
+	gotUpdates := updates
+	mu.Unlock()
+	if gotUpdates != 0 {
+		t.Fatalf("build failure pushed canonical inbound %d time(s), want 0", gotUpdates)
+	}
+}
+
 func TestEnsureInboundTagAllowed(t *testing.T) {
 	setupConflictDB(t)
 	db := database.GetDB()
