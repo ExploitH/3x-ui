@@ -3139,6 +3139,10 @@
       "description": "Manage clients as first-class entities that can be attached to one or more inbounds. A single client row drives the settings.clients entry in every inbound it belongs to. Endpoints live under /panel/api/clients."
     },
     {
+      "name": "Billing",
+      "description": "Admin-only physical traffic and infrastructure cost views. Provider cycle imports are explicit and redacted; heartbeat/NIC counters are reconciliation data and are not silently billed as provider traffic."
+    },
+    {
       "name": "Nodes",
       "description": "Manage remote 3x-ui panels acting as nodes for a central panel. All endpoints under /panel/api/nodes."
     },
@@ -8624,6 +8628,189 @@
                   "obj": [
                     "vless://uuid@host:443?...#user1"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/billing/summary": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Calculate the monthly billing estimate as of a timestamp. Returns currency-separated minor-unit summaries and line items for active node profiles and infrastructure costs.",
+        "operationId": "get_panel_api_billing_summary",
+        "parameters": [
+          {
+            "name": "asOf",
+            "in": "query",
+            "required": true,
+            "description": "Optional positive Unix-millisecond evaluation time.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "asOf": 2000,
+                    "byCurrency": {
+                      "CNY": {
+                        "baseMinor": 1685,
+                        "overageMinor": 250,
+                        "totalMinor": 1935
+                      }
+                    },
+                    "lines": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/billing/cycles/{nodeId}": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "List physical traffic/provider cycles for one node, optionally bounded by cycle-start timestamps. The response is capped at 500 rows; provider billable bytes and NIC ingress/egress remain separate fields.",
+        "operationId": "get_panel_api_billing_cycles_nodeId",
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "description": "Physical node ID.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Optional inclusive cycle-start Unix-millisecond bound.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Optional exclusive cycle-start Unix-millisecond bound.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": [
+                    {
+                      "nodeId": 7,
+                      "cycleStart": 100,
+                      "source": "provider_import",
+                      "providerBillableBytes": 123
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/billing/cycles": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Idempotently import one redacted provider/heartbeat cycle for an existing physical node. The key is nodeId + cycleStart + source. This endpoint stores data only; it does not call a provider API.",
+        "operationId": "post_panel_api_billing_cycles",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "nodeId": 7,
+                "cycleStart": 100,
+                "cycleEnd": 200,
+                "ingressBytes": 11,
+                "egressBytes": 22,
+                "providerBillableBytes": 33,
+                "source": "provider_import",
+                "trafficCalcType": "total"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "nodeId": 7,
+                    "cycleStart": 100,
+                    "source": "provider_import"
+                  }
                 }
               }
             }

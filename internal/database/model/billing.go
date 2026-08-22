@@ -48,13 +48,13 @@ func (InfrastructureCost) TableName() string { return "infrastructure_costs" }
 // ingress and egress.
 type NodeTrafficCycle struct {
 	Id                    int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	NodeId                int    `json:"nodeId" gorm:"column:node_id;not null;index:idx_node_traffic_cycle,priority:1"`
-	CycleStart            int64  `json:"cycleStart" gorm:"column:cycle_start;not null;index:idx_node_traffic_cycle,priority:2"`
+	NodeId                int    `json:"nodeId" gorm:"column:node_id;not null;uniqueIndex:idx_node_traffic_cycle_identity,priority:1;index:idx_node_traffic_cycle,priority:1"`
+	CycleStart            int64  `json:"cycleStart" gorm:"column:cycle_start;not null;uniqueIndex:idx_node_traffic_cycle_identity,priority:2;index:idx_node_traffic_cycle,priority:2"`
 	CycleEnd              int64  `json:"cycleEnd" gorm:"column:cycle_end;not null;default:0"`
 	IngressBytes          int64  `json:"ingressBytes" gorm:"column:ingress_bytes;not null;default:0"`
 	EgressBytes           int64  `json:"egressBytes" gorm:"column:egress_bytes;not null;default:0"`
 	ProviderBillableBytes int64  `json:"providerBillableBytes" gorm:"column:provider_billable_bytes;not null;default:0"`
-	Source                string `json:"source" gorm:"not null;index:idx_node_traffic_cycle,priority:3"`
+	Source                string `json:"source" gorm:"not null;index:idx_node_traffic_cycle,priority:3;uniqueIndex:idx_node_traffic_cycle_identity,priority:3"`
 	TrafficCalcType       string `json:"trafficCalcType" gorm:"column:traffic_calc_type;not null;default:total"`
 	CreatedAt             int64  `json:"createdAt" gorm:"autoCreateTime:milli"`
 	UpdatedAt             int64  `json:"updatedAt" gorm:"autoUpdateTime:milli"`

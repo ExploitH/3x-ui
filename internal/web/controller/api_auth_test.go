@@ -84,6 +84,15 @@ func newAPIAuthTestEngine(t *testing.T) (*gin.Engine, *APIController) {
 	api.POST("/clients/nodeQuotas/:email/resetAll", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"reached": true})
 	})
+	api.GET("/billing/summary", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
+	api.GET("/billing/cycles/:nodeId", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
+	api.POST("/billing/cycles", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
 	api.POST("/inbounds/:id/resetTraffic", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"reached": true})
 	})
@@ -200,6 +209,9 @@ func TestNodeSyncScopeUsesFullPathPatterns(t *testing.T) {
 		{"node quota read forbidden", http.MethodGet, "/panel/api/clients/nodeQuotas/alice@example.com", http.StatusForbidden},
 		{"node quota specific reset forbidden", http.MethodPost, "/panel/api/clients/nodeQuotas/alice@example.com/reset/7", http.StatusForbidden},
 		{"node quota all reset forbidden", http.MethodPost, "/panel/api/clients/nodeQuotas/alice@example.com/resetAll", http.StatusForbidden},
+		{"billing summary forbidden", http.MethodGet, "/panel/api/billing/summary", http.StatusForbidden},
+		{"billing cycles read forbidden", http.MethodGet, "/panel/api/billing/cycles/7", http.StatusForbidden},
+		{"billing cycles import forbidden", http.MethodPost, "/panel/api/billing/cycles", http.StatusForbidden},
 		{"update panel forbidden", http.MethodPost, "/panel/api/server/updatePanel", http.StatusForbidden},
 	}
 	for _, tc := range cases {

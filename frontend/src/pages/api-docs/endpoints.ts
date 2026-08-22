@@ -1328,6 +1328,71 @@ export const sections: readonly Section[] = [
   },
 
   {
+    id: 'billing',
+    title: 'Billing',
+    description:
+      'Admin-only physical traffic and infrastructure cost views. Provider cycle imports are explicit and redacted; heartbeat/NIC counters are reconciliation data and are not silently billed as provider traffic.',
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/panel/api/billing/summary',
+        summary:
+          'Calculate the monthly billing estimate as of a timestamp. Returns currency-separated minor-unit summaries and line items for active node profiles and infrastructure costs.',
+        params: [
+          {
+            name: 'asOf',
+            in: 'query',
+            type: 'integer',
+            desc: 'Optional positive Unix-millisecond evaluation time.',
+          },
+        ],
+        response:
+          '{\n  "success": true,\n  "obj": {\n    "asOf": 2000,\n    "byCurrency": { "CNY": { "baseMinor": 1685, "overageMinor": 250, "totalMinor": 1935 } },\n    "lines": []\n  }\n}',
+      },
+      {
+        method: 'GET',
+        path: '/panel/api/billing/cycles/:nodeId',
+        summary:
+          'List physical traffic/provider cycles for one node, optionally bounded by cycle-start timestamps. The response is capped at 500 rows; provider billable bytes and NIC ingress/egress remain separate fields.',
+        params: [
+          { name: 'nodeId', in: 'path', type: 'integer', desc: 'Physical node ID.' },
+          {
+            name: 'from',
+            in: 'query',
+            type: 'integer',
+            desc: 'Optional inclusive cycle-start Unix-millisecond bound.',
+          },
+          {
+            name: 'to',
+            in: 'query',
+            type: 'integer',
+            desc: 'Optional exclusive cycle-start Unix-millisecond bound.',
+          },
+        ],
+        response:
+          '{\n  "success": true,\n  "obj": [\n    { "nodeId": 7, "cycleStart": 100, "source": "provider_import", "providerBillableBytes": 123 }\n  ]\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/billing/cycles',
+        summary:
+          'Idempotently import one redacted provider/heartbeat cycle for an existing physical node. The key is nodeId + cycleStart + source. This endpoint stores data only; it does not call a provider API.',
+        params: [
+          {
+            name: 'cycle',
+            in: 'body (json)',
+            type: 'object',
+            desc: 'Fields: nodeId, cycleStart, cycleEnd, ingressBytes, egressBytes, providerBillableBytes, source=provider_import|heartbeat, trafficCalcType=total|ul|dl|max.',
+          },
+        ],
+        body: '{\n  "nodeId": 7,\n  "cycleStart": 100,\n  "cycleEnd": 200,\n  "ingressBytes": 11,\n  "egressBytes": 22,\n  "providerBillableBytes": 33,\n  "source": "provider_import",\n  "trafficCalcType": "total"\n}',
+        response:
+          '{\n  "success": true,\n  "obj": { "nodeId": 7, "cycleStart": 100, "source": "provider_import" }\n}',
+      },
+    ],
+  },
+
+  {
     id: 'nodes',
     title: 'Nodes',
     description:
