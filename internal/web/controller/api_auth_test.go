@@ -72,6 +72,18 @@ func newAPIAuthTestEngine(t *testing.T) (*gin.Engine, *APIController) {
 	api.POST("/clients/:email/detach", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"reached": true})
 	})
+	api.GET("/clients/nodeQuotas/:email", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
+	api.POST("/clients/nodeQuotas/:email", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
+	api.POST("/clients/nodeQuotas/:email/reset/:nodeId", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
+	api.POST("/clients/nodeQuotas/:email/resetAll", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"reached": true})
+	})
 	api.POST("/inbounds/:id/resetTraffic", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"reached": true})
 	})
@@ -184,6 +196,10 @@ func TestNodeSyncScopeUsesFullPathPatterns(t *testing.T) {
 		{"detach email parameter", http.MethodPost, "/panel/api/clients/alice@example.com/detach", http.StatusOK},
 		{"reset inbound id parameter", http.MethodPost, "/panel/api/inbounds/42/resetTraffic", http.StatusOK},
 		{"client IP by guid endpoint", http.MethodPost, "/panel/api/clients/clientIpsByGuid", http.StatusOK},
+		{"node quota management forbidden", http.MethodPost, "/panel/api/clients/nodeQuotas/alice@example.com", http.StatusForbidden},
+		{"node quota read forbidden", http.MethodGet, "/panel/api/clients/nodeQuotas/alice@example.com", http.StatusForbidden},
+		{"node quota specific reset forbidden", http.MethodPost, "/panel/api/clients/nodeQuotas/alice@example.com/reset/7", http.StatusForbidden},
+		{"node quota all reset forbidden", http.MethodPost, "/panel/api/clients/nodeQuotas/alice@example.com/resetAll", http.StatusForbidden},
 		{"update panel forbidden", http.MethodPost, "/panel/api/server/updatePanel", http.StatusForbidden},
 	}
 	for _, tc := range cases {

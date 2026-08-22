@@ -63,6 +63,7 @@ import type {
   InboundOption,
   ExternalLink,
   ExternalLinkInput,
+  ClientNodeQuotaInput,
 } from '@/hooks/useClients';
 import ClientTrafficCell from '@/components/clients/ClientTrafficCell';
 import ClientSpeedTag, { isActiveSpeed } from '@/components/clients/ClientSpeedTag';
@@ -332,6 +333,10 @@ export default function ClientsPage() {
     applyClientStatsEvent,
     refresh,
     hydrate,
+    getNodeQuotas,
+    replaceNodeQuotas,
+    resetNodeQuota,
+    resetAllNodeQuotas,
   } = useClients();
 
   useWebSocket({
@@ -931,29 +936,52 @@ export default function ClientsPage() {
     async (
       payload: Record<string, unknown> | { client: Record<string, unknown>; inboundIds: number[] },
       meta:
-        | { isEdit: false; email: string; externalLinks: ExternalLinkInput[] }
+        | {
+            isEdit: false;
+            email: string;
+            externalLinks: ExternalLinkInput[];
+            nodeQuotas: ClientNodeQuotaInput[];
+          }
         | {
             isEdit: true;
             email: string;
             attach: number[];
             detach: number[];
             externalLinks: ExternalLinkInput[];
+            nodeQuotas: ClientNodeQuotaInput[];
+            originalNodeQuotas: ClientNodeQuotaInput[];
           },
     ) => {
       if (!meta.isEdit) {
         const createMsg = await create(payload);
         if (!createMsg?.success) return createMsg;
+        if (replaceNodeQuotas) {
+          const quotaMsg = await replaceNodeQuotas(meta.email, meta.nodeQuotas);
+          if (!quotaMsg?.success) {
+            await remove(meta.email, false);
+            return quotaMsg;
+          }
+        }
         if (meta.email && meta.externalLinks.length > 0) {
           const r = await setExternalLinks(meta.email, meta.externalLinks);
           if (!r?.success) return r;
         }
         return createMsg;
       }
-      const updateMsg = await update(meta.email, payload);
-      if (!updateMsg?.success) return updateMsg;
       const rawEmail = (payload as { email?: unknown }).email;
       const emailKey =
         typeof rawEmail === 'string' && rawEmail.trim() ? rawEmail.trim() : meta.email;
+      if (replaceNodeQuotas) {
+        const quotaMsg = await replaceNodeQuotas(meta.email, meta.nodeQuotas);
+        if (!quotaMsg?.success) return quotaMsg;
+      }
+      const updateMsg = await update(meta.email, payload);
+      if (!updateMsg?.success) {
+        if (replaceNodeQuotas) {
+          await replaceNodeQuotas(meta.email, meta.originalNodeQuotas);
+        }
+        return updateMsg;
+      }
       if (Array.isArray(meta.attach) && meta.attach.length > 0) {
         const r = await attach(emailKey, meta.attach);
         if (!r?.success) return r;
@@ -967,7 +995,7 @@ export default function ClientsPage() {
       if (!r?.success) return r;
       return updateMsg;
     },
-    [create, update, attach, detach, setExternalLinks],
+    [create, update, remove, replaceNodeQuotas, attach, detach, setExternalLinks],
   );
 
   const pageClass = useMemo(() => {
@@ -1841,6 +1869,10 @@ export default function ClientsPage() {
             inbounds={inbounds}
             tgBotEnable={tgBotEnable}
             groups={allGroups}
+            nodes={nodes}
+            getNodeQuotas={getNodeQuotas}
+            resetNodeQuota={resetNodeQuota}
+            resetAllNodeQuotas={resetAllNodeQuotas}
             save={onSave}
             resetTraffic={resetTraffic}
             onOpenChange={setFormOpen}

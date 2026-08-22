@@ -6199,6 +6199,243 @@
         }
       }
     },
+    "/panel/api/clients/nodeQuotas/{email}": {
+      "get": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "Return per-physical-node quota configuration, upload/download usage, remaining state, and node-local enforcement status for one client.",
+        "operationId": "get_panel_api_clients_nodeQuotas_email",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email (unique identifier).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "nodeQuotas": [
+                      {
+                        "nodeId": 7,
+                        "nodeName": "HK",
+                        "totalBytes": 107374182400,
+                        "resetPolicy": "monthly",
+                        "resetDay": 15,
+                        "up": 32212254720,
+                        "down": 21474836480,
+                        "blocked": false,
+                        "reason": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "Atomically replace all per-node quotas. totalBytes=0 means unlimited. Quota changes never toggle the global client enable flag; pendingNodeIds reports remote node mutations waiting for retry.",
+        "operationId": "post_panel_api_clients_nodeQuotas_email",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email (unique identifier).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "nodeQuotas": [
+                  {
+                    "nodeId": 7,
+                    "totalBytes": 107374182400,
+                    "resetPolicy": "monthly",
+                    "resetDay": 15
+                  },
+                  {
+                    "nodeId": 8,
+                    "totalBytes": 0,
+                    "resetPolicy": "never",
+                    "resetDay": 1
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "nodeQuotas": [],
+                    "pendingNodeIds": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/clients/nodeQuotas/{email}/reset/{nodeId}": {
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "Reset usage for one physical node only. If that node was blocked solely by node quota exhaustion, its access is restored subject to global, expiry, and admin gates.",
+        "operationId": "post_panel_api_clients_nodeQuotas_email_reset_nodeId",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "description": "Physical node ID.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "nodeId": 7,
+                    "pending": false,
+                    "nodeQuotas": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/clients/nodeQuotas/{email}/resetAll": {
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "Reset usage for every configured physical node of one client. Global traffic counters and raw node baselines remain unchanged.",
+        "operationId": "post_panel_api_clients_nodeQuotas_email_resetAll",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                },
+                "example": {
+                  "success": true,
+                  "obj": {
+                    "pendingNodeIds": [],
+                    "nodeQuotas": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/panel/api/clients/get/tgId/{tgId}": {
       "get": {
         "tags": [

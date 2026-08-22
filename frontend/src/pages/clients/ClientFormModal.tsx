@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AutoComplete,
   Button,
+  Card,
   Col,
   Form,
   Input,
@@ -13,6 +14,7 @@ import {
   Select,
   Space,
   Switch,
+  Spin,
   Tabs,
   Tag,
   Tooltip,
@@ -45,9 +47,19 @@ import type {
   InboundOption,
   ExternalLink,
   ExternalLinkInput,
+  ClientNodeQuotaInput,
+  ClientNodeQuotaView,
 } from '@/hooks/useClients';
 import { useFail2banStatusQuery, getLimitIpNotice } from '@/api/queries/useFail2banStatusQuery';
 import { ClientFormSchema, ClientCreateFormSchema, type ClientFormValues } from '@/schemas/client';
+import type { NodeRecord } from '@/schemas/node';
+import {
+  buildNodeQuotaRows,
+  bytesToQuotaGB,
+  quotaGBToBytes,
+  serializeNodeQuotaRows,
+  type ClientNodeQuotaRow,
+} from './clientNodeQuotaForm';
 
 const FLOW_OPTIONS = Object.values(TLS_FLOW_CONTROL);
 const VMESS_SECURITY_OPTIONS = ['auto', 'aes-128-gcm', 'chacha20-poly1305'] as const;
@@ -64,6 +76,7 @@ const MULTI_CLIENT_PROTOCOLS = new Set([
 
 const CLIENT_FORM_MODAL_Z_INDEX = 1000;
 const CLIENT_IP_LOG_MODAL_Z_INDEX = CLIENT_FORM_MODAL_Z_INDEX + 1;
+const EMPTY_NODE_RECORDS: NodeRecord[] = [];
 
 interface ExternalLinkRow {
   kind: 'link' | 'subscription';
@@ -79,8 +92,19 @@ interface ExternalLinkRow {
 interface ApiMsg<T = unknown> {
   success?: boolean;
   msg?: string;
-  obj?: T;
+  obj?: T | null;
 }
+
+type NodeQuotaResponse = {
+  nodeQuotas: ClientNodeQuotaView[];
+  pendingNodeIds?: number[];
+  nodeId?: number;
+  pending?: boolean;
+};
+
+type NodeQuotaRead = (email: string) => Promise<ClientNodeQuotaView[]>;
+type NodeQuotaReset = (email: string, nodeId: number) => Promise<ApiMsg<NodeQuotaResponse> | null>;
+type NodeQuotaResetAll = (email: string) => Promise<ApiMsg<NodeQuotaResponse> | null>;
 
 type Mode = 'add' | 'edit';
 
@@ -90,12 +114,15 @@ interface SaveMetaEdit {
   attach: number[];
   detach: number[];
   externalLinks: ExternalLinkInput[];
+  nodeQuotas: ClientNodeQuotaInput[];
+  originalNodeQuotas: ClientNodeQuotaInput[];
 }
 
 interface SaveMetaCreate {
   isEdit: false;
   email: string;
   externalLinks: ExternalLinkInput[];
+  nodeQuotas: ClientNodeQuotaInput[];
 }
 
 interface SaveCreatePayload {
@@ -112,6 +139,10 @@ interface ClientFormModalProps {
   attachedIds?: number[];
   tgBotEnable?: boolean;
   groups?: string[];
+  nodes?: NodeRecord[];
+  getNodeQuotas?: NodeQuotaRead;
+  resetNodeQuota?: NodeQuotaReset;
+  resetAllNodeQuotas?: NodeQuotaResetAll;
   save: (
     payload: Record<string, unknown> | SaveCreatePayload,
     meta: SaveMetaEdit | SaveMetaCreate,
@@ -208,6 +239,10 @@ export default function ClientFormModal({
   attachedIds = [],
   tgBotEnable = false,
   groups = [],
+  nodes = EMPTY_NODE_RECORDS,
+  getNodeQuotas,
+  resetNodeQuota,
+  resetAllNodeQuotas,
   save,
   resetTraffic,
   onOpenChange,
@@ -241,6 +276,12 @@ export default function ClientFormModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [nodeQuotaRows, setNodeQuotaRows] = useState<ClientNodeQuotaRow[]>([]);
+  const [nodeQuotaViews, setNodeQuotaViews] = useState<ClientNodeQuotaView[]>([]);
+  const [nodeQuotaLoading, setNodeQuotaLoading] = useState(false);
+  const [nodeQuotaError, setNodeQuotaError] = useState('');
+  const [nodeQuotaBusy, setNodeQuotaBusy] = useState<number | 'all' | null>(null);
+  const nodeQuotaDirty = useRef(false);
   const [clientIps, setClientIps] = useState<ClientIpInfo[]>([]);
   const [ipsLoading, setIpsLoading] = useState(false);
   const [ipsClearing, setIpsClearing] = useState(false);
@@ -344,6 +385,40 @@ export default function ClientFormModal({
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEdit]);
+
+  useEffect(() => {
+    if (!open) return;
+    nodeQuotaDirty.current = false;
+    setNodeQuotaError('');
+    if (!isEdit || !client?.email || !getNodeQuotas) {
+      setNodeQuotaViews([]);
+      setNodeQuotaLoading(false);
+      return;
+    }
+    let active = true;
+    setNodeQuotaLoading(true);
+    void getNodeQuotas(client.email)
+      .then((views) => {
+        if (!active) return;
+        setNodeQuotaViews(views);
+        setNodeQuotaError('');
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setNodeQuotaError(err instanceof Error ? err.message : 'Failed to load node quotas');
+      })
+      .finally(() => {
+        if (active) setNodeQuotaLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, isEdit, client?.email, getNodeQuotas]);
+
+  useEffect(() => {
+    if (!open || nodeQuotaDirty.current) return;
+    setNodeQuotaRows(buildNodeQuotaRows(nodes, nodeQuotaViews));
+  }, [open, nodes, nodeQuotaViews]);
 
   const flowCapableIds = useMemo(() => {
     const ids = new Set<number>();
@@ -561,6 +636,48 @@ export default function ClientFormModal({
     }
   }
 
+  function updateNodeQuotaRow(nodeId: number, patch: Partial<ClientNodeQuotaRow>) {
+    nodeQuotaDirty.current = true;
+    setNodeQuotaRows((rows) =>
+      rows.map((row) => (row.nodeId === nodeId ? { ...row, ...patch } : row)),
+    );
+  }
+
+  function applyNodeQuotaResponse(msg: ApiMsg<NodeQuotaResponse> | null) {
+    if (msg?.success && msg.obj) {
+      nodeQuotaDirty.current = false;
+      setNodeQuotaViews(msg.obj.nodeQuotas || []);
+      setNodeQuotaRows(buildNodeQuotaRows(nodes, msg.obj.nodeQuotas || []));
+    }
+    return !!msg?.success;
+  }
+
+  async function onResetNodeQuota(nodeId: number) {
+    if (!isEdit || !client?.email || !resetNodeQuota) return;
+    setNodeQuotaBusy(nodeId);
+    try {
+      const msg = await resetNodeQuota(client.email, nodeId);
+      if (!applyNodeQuotaResponse(msg)) {
+        messageApi.error(msg?.msg || t('somethingWentWrong'));
+      }
+    } finally {
+      setNodeQuotaBusy(null);
+    }
+  }
+
+  async function onResetAllNodeQuotas() {
+    if (!isEdit || !client?.email || !resetAllNodeQuotas) return;
+    setNodeQuotaBusy('all');
+    try {
+      const msg = await resetAllNodeQuotas(client.email);
+      if (!applyNodeQuotaResponse(msg)) {
+        messageApi.error(msg?.msg || t('somethingWentWrong'));
+      }
+    } finally {
+      setNodeQuotaBusy(null);
+    }
+  }
+
   async function onSubmit() {
     const values = methods.getValues();
     const schema = isEdit ? ClientFormSchema : ClientCreateFormSchema;
@@ -661,6 +778,9 @@ export default function ClientFormModal({
       }))
       .filter((r) => r.value !== '');
 
+    const nodeQuotas = serializeNodeQuotaRows(nodeQuotaRows);
+    const originalNodeQuotas = serializeNodeQuotaRows(buildNodeQuotaRows([], nodeQuotaViews));
+
     setSubmitting(true);
     try {
       let msg;
@@ -675,11 +795,13 @@ export default function ClientFormModal({
           attach: toAttach,
           detach: toDetach,
           externalLinks,
+          nodeQuotas,
+          originalNodeQuotas,
         });
       } else {
         msg = await save(
           { client: clientPayload, inboundIds: values.inboundIds },
-          { isEdit: false, email: clientPayload.email as string, externalLinks },
+          { isEdit: false, email: clientPayload.email as string, externalLinks, nodeQuotas },
         );
       }
       if (msg?.success) close();
@@ -725,7 +847,12 @@ export default function ClientFormModal({
             )}
             <div style={{ marginInlineStart: 'auto', display: 'flex', gap: 8 }}>
               <Button onClick={close}>{t('cancel')}</Button>
-              <Button type="primary" loading={submitting} onClick={onSubmit}>
+              <Button
+                type="primary"
+                loading={submitting}
+                disabled={nodeQuotaLoading || !!nodeQuotaError}
+                onClick={onSubmit}
+              >
                 {isEdit ? t('save') : t('create')}
               </Button>
             </div>
@@ -1175,6 +1302,164 @@ export default function ClientFormModal({
                             <Input allowClear placeholder="0123456789abcdef0123456789abcdef" />
                           </FormField>
                         </>
+                      )}
+                    </>
+                  ),
+                },
+                {
+                  key: 'nodeQuotas',
+                  label: t('pages.clients.nodeQuotas', { defaultValue: 'Per-node limits' }),
+                  children: (
+                    <>
+                      <Typography.Paragraph type="secondary" style={{ marginTop: 4 }}>
+                        {t('pages.clients.nodeQuotasHint', {
+                          defaultValue:
+                            'Limits apply to the physical node. 0 means unlimited; a node quota never disables the whole client.',
+                        })}
+                      </Typography.Paragraph>
+                      {nodeQuotaError && (
+                        <Typography.Paragraph type="danger">
+                          {nodeQuotaError}{' '}
+                          {t('pages.clients.nodeQuotaSaveDisabled', {
+                            defaultValue: 'Save is disabled until node quotas can be loaded.',
+                          })}
+                        </Typography.Paragraph>
+                      )}
+                      {isEdit && resetAllNodeQuotas && nodeQuotaRows.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <Button
+                            icon={<RetweetOutlined />}
+                            loading={nodeQuotaBusy === 'all'}
+                            disabled={nodeQuotaBusy !== null || nodeQuotaDirty.current}
+                            onClick={onResetAllNodeQuotas}
+                          >
+                            {t('pages.clients.resetAllNodeQuotas', {
+                              defaultValue: 'Reset all node traffic',
+                            })}
+                          </Button>
+                        </div>
+                      )}
+                      {nodeQuotaLoading ? (
+                        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+                          <Spin />
+                        </div>
+                      ) : nodeQuotaRows.length === 0 ? (
+                        <Typography.Text type="secondary">
+                          {t('pages.clients.noNodes', {
+                            defaultValue: 'No physical nodes available.',
+                          })}
+                        </Typography.Text>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 10 }}>
+                          {nodeQuotaRows.map((row) => {
+                            const usedBytes = row.up + row.down;
+                            const usedGB = bytesToQuotaGB(usedBytes);
+                            const exceeded =
+                              row.totalGB > 0 && usedBytes >= quotaGBToBytes(row.totalGB);
+                            return (
+                              <Card
+                                key={row.nodeId}
+                                size="small"
+                                styles={{ body: { padding: 12 } }}
+                              >
+                                <Row gutter={[12, 8]} align="middle">
+                                  <Col xs={24} md={7}>
+                                    <Typography.Text strong>{row.nodeName}</Typography.Text>
+                                    <div>
+                                      <Tag color={row.blocked || exceeded ? 'red' : 'green'}>
+                                        {usedGB.toFixed(2)} GB /{' '}
+                                        {row.totalGB > 0 ? `${row.totalGB} GB` : '∞'}
+                                      </Tag>
+                                      {row.blocked && (
+                                        <Tag color="red">
+                                          {t('pages.clients.quotaExceeded', {
+                                            defaultValue: 'Exceeded',
+                                          })}
+                                        </Tag>
+                                      )}
+                                    </div>
+                                    {row.lastError && (
+                                      <Typography.Text type="danger" ellipsis>
+                                        {row.lastError}
+                                      </Typography.Text>
+                                    )}
+                                  </Col>
+                                  <Col xs={12} md={5}>
+                                    <Typography.Text type="secondary">
+                                      {t('pages.clients.nodeLimitGB', {
+                                        defaultValue: 'Limit (GB)',
+                                      })}
+                                    </Typography.Text>
+                                    <InputNumber
+                                      min={0}
+                                      step={0.01}
+                                      precision={6}
+                                      value={row.totalGB}
+                                      style={{ width: '100%' }}
+                                      onChange={(value) =>
+                                        updateNodeQuotaRow(row.nodeId, {
+                                          totalGB: Number(value) || 0,
+                                        })
+                                      }
+                                    />
+                                  </Col>
+                                  <Col xs={12} md={5}>
+                                    <Typography.Text type="secondary">
+                                      {t('pages.clients.resetPolicy', { defaultValue: 'Reset' })}
+                                    </Typography.Text>
+                                    <Select
+                                      value={row.resetPolicy}
+                                      style={{ width: '100%' }}
+                                      options={[
+                                        'never',
+                                        'hourly',
+                                        'daily',
+                                        'weekly',
+                                        'monthly',
+                                      ].map((value) => ({
+                                        value,
+                                        label: value[0].toUpperCase() + value.slice(1),
+                                      }))}
+                                      onChange={(value) =>
+                                        updateNodeQuotaRow(row.nodeId, { resetPolicy: value })
+                                      }
+                                    />
+                                  </Col>
+                                  <Col xs={12} md={4}>
+                                    <Typography.Text type="secondary">
+                                      {t('pages.clients.resetDay', { defaultValue: 'Day' })}
+                                    </Typography.Text>
+                                    <InputNumber
+                                      min={1}
+                                      max={31}
+                                      value={row.resetDay}
+                                      disabled={row.resetPolicy === 'never'}
+                                      style={{ width: '100%' }}
+                                      onChange={(value) =>
+                                        updateNodeQuotaRow(row.nodeId, {
+                                          resetDay: Number(value) || 1,
+                                        })
+                                      }
+                                    />
+                                  </Col>
+                                  {isEdit && resetNodeQuota && (
+                                    <Col xs={12} md={3}>
+                                      <Button
+                                        block
+                                        icon={<RetweetOutlined />}
+                                        loading={nodeQuotaBusy === row.nodeId}
+                                        disabled={nodeQuotaBusy !== null || nodeQuotaDirty.current}
+                                        onClick={() => onResetNodeQuota(row.nodeId)}
+                                      >
+                                        {t('reset')}
+                                      </Button>
+                                    </Col>
+                                  )}
+                                </Row>
+                              </Card>
+                            );
+                          })}
+                        </div>
                       )}
                     </>
                   ),

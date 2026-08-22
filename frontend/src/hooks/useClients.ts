@@ -17,6 +17,7 @@ import {
   BulkSetEnableResultSchema,
   BulkDetachResultSchema,
   DelDepletedResultSchema,
+  ClientNodeQuotaResponseSchema,
   type ClientHydrate,
   type ClientRecord,
   type ClientTraffic,
@@ -24,6 +25,8 @@ import {
   type ClientPageResponse,
   type InboundOption,
   type ExternalLink,
+  type ClientNodeQuotaView,
+  type ClientNodeQuotaResponse,
   type BulkAdjustResult,
   type BulkAttachResult,
   type BulkCreateResult,
@@ -45,6 +48,14 @@ export type ExternalLinkInput = {
 };
 
 export type { ClientRecord, ClientTraffic, ClientsSummary, InboundOption, ExternalLink };
+export type { ClientNodeQuotaView, ClientNodeQuotaResponse };
+
+export type ClientNodeQuotaInput = {
+  nodeId: number;
+  totalBytes: number;
+  resetPolicy: string;
+  resetDay: number;
+};
 
 const JSON_HEADERS = { headers: { 'Content-Type': 'application/json' } } as const;
 
@@ -159,6 +170,15 @@ async function fetchDefaults(): Promise<Record<string, unknown>> {
   if (!msg?.success) throw new Error(msg?.msg || 'Failed to fetch defaults');
   const validated = parseMsg(msg, DefaultsPayloadSchema, 'setting/defaultSettings');
   return validated.obj || {};
+}
+
+async function fetchClientNodeQuotas(email: string): Promise<ClientNodeQuotaView[]> {
+  const msg = await HttpUtil.get(`/panel/api/clients/nodeQuotas/${encodeURIComponent(email)}`);
+  if (!msg?.success) throw new Error(msg?.msg || 'Failed to fetch node quotas');
+  const validated = parseMsg(msg, ClientNodeQuotaResponseSchema, 'clients/nodeQuotas', {
+    strict: true,
+  });
+  return validated.obj?.nodeQuotas ?? [];
 }
 
 export interface UseClientsOptions {
@@ -777,6 +797,35 @@ export function useClients(options: UseClientsOptions = {}) {
     queryRef.current = query;
   }, [query]);
 
+  const getNodeQuotas = useCallback(
+    (email: string) => (email ? fetchClientNodeQuotas(email) : Promise.resolve([])),
+    [],
+  );
+  const replaceNodeQuotas = useCallback(
+    async (email: string, nodeQuotas: ClientNodeQuotaInput[]) => {
+      if (!email) return null as unknown as Msg<ClientNodeQuotaResponse>;
+      const raw = await HttpUtil.post(
+        `/panel/api/clients/nodeQuotas/${encodeURIComponent(email)}`,
+        { nodeQuotas },
+        JSON_HEADERS,
+      );
+      return parseMsg(raw, ClientNodeQuotaResponseSchema, 'clients/nodeQuotas');
+    },
+    [],
+  );
+  const resetNodeQuota = useCallback(async (email: string, nodeId: number) => {
+    const raw = await HttpUtil.post(
+      `/panel/api/clients/nodeQuotas/${encodeURIComponent(email)}/reset/${nodeId}`,
+    );
+    return parseMsg(raw, ClientNodeQuotaResponseSchema, 'clients/nodeQuotas/reset');
+  }, []);
+  const resetAllNodeQuotas = useCallback(async (email: string) => {
+    const raw = await HttpUtil.post(
+      `/panel/api/clients/nodeQuotas/${encodeURIComponent(email)}/resetAll`,
+    );
+    return parseMsg(raw, ClientNodeQuotaResponseSchema, 'clients/nodeQuotas/resetAll');
+  }, []);
+
   return {
     clients,
     total,
@@ -784,6 +833,10 @@ export function useClients(options: UseClientsOptions = {}) {
     summary,
     allGroups,
     hydrate,
+    getNodeQuotas,
+    replaceNodeQuotas,
+    resetNodeQuota,
+    resetAllNodeQuotas,
     query,
     setQuery,
     inbounds,

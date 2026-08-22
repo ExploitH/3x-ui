@@ -143,6 +143,40 @@ export const ClientHydrateSchema = z.object({
   externalLinks: ExternalLinkListSchema.optional(),
 });
 
+export const ClientNodeQuotaViewSchema = z
+  .object({
+    nodeId: z.number(),
+    nodeName: z.string().optional().default(''),
+    totalBytes: z.number(),
+    resetPolicy: z.string(),
+    resetDay: z.number(),
+    lastResetAt: z.number().optional().default(0),
+    up: z.number().optional().default(0),
+    down: z.number().optional().default(0),
+    blocked: z.boolean().optional().default(false),
+    reason: z.string().optional().default(''),
+    blockedAt: z.number().optional().default(0),
+    appliedAt: z.number().optional().default(0),
+    lastError: z.string().optional().default(''),
+    updatedAt: z.number().optional().default(0),
+  })
+  .loose();
+
+export const ClientNodeQuotaResponseSchema = z
+  .object({
+    nodeQuotas: z
+      .array(ClientNodeQuotaViewSchema)
+      .nullable()
+      .transform((v) => v ?? []),
+    pendingNodeIds: nullableNumberArray.optional(),
+    nodeId: z.number().optional(),
+    pending: z.boolean().optional(),
+  })
+  .loose();
+
+export type ClientNodeQuotaView = z.infer<typeof ClientNodeQuotaViewSchema>;
+export type ClientNodeQuotaResponse = z.infer<typeof ClientNodeQuotaResponseSchema>;
+
 export const BulkAdjustResultSchema = z.object({
   adjusted: z.number(),
   skipped: z.array(z.object({ email: z.string(), reason: z.string() })).optional(),

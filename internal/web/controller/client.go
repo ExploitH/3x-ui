@@ -50,6 +50,10 @@ func (a *ClientController) initRouter(g *gin.RouterGroup) {
 	g.GET("/get/:email", a.get)
 	g.GET("/get/tgId/:tgId", a.getByTgId)
 	g.GET("/traffic/:email", a.getTrafficByEmail)
+	g.GET("/nodeQuotas/:email", a.getNodeQuotas)
+	g.POST("/nodeQuotas/:email", a.replaceNodeQuotas)
+	g.POST("/nodeQuotas/:email/reset/:nodeId", a.resetNodeQuota)
+	g.POST("/nodeQuotas/:email/resetAll", a.resetAllNodeQuotas)
 	g.GET("/subLinks/:subId", a.getSubLinks)
 	g.GET("/links/:email", a.getClientLinks)
 
@@ -148,6 +152,78 @@ func (a *ClientController) get(c *gin.Context) {
 		return
 	}
 	jsonObj(c, payload, nil)
+}
+
+type clientNodeQuotaReplaceRequest struct {
+	NodeQuotas []service.ClientNodeQuotaInput `json:"nodeQuotas"`
+}
+
+func (a *ClientController) getNodeQuotas(c *gin.Context) {
+	email := c.Param("email")
+	views, err := a.inboundService.GetClientNodeQuotas(email)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	jsonObj(c, gin.H{"nodeQuotas": views}, nil)
+}
+
+func (a *ClientController) replaceNodeQuotas(c *gin.Context) {
+	email := c.Param("email")
+	var req clientNodeQuotaReplaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	pending, err := a.inboundService.ReplaceClientNodeQuotas(c.Request.Context(), email, req.NodeQuotas)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	views, err := a.inboundService.GetClientNodeQuotas(email)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	jsonObj(c, gin.H{"nodeQuotas": views, "pendingNodeIds": pending}, nil)
+	notifyClientsChanged()
+}
+
+func (a *ClientController) resetNodeQuota(c *gin.Context) {
+	email := c.Param("email")
+	nodeID, err := strconv.Atoi(c.Param("nodeId"))
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	pending, err := a.inboundService.ResetClientNodeTraffic(c.Request.Context(), email, nodeID)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	views, err := a.inboundService.GetClientNodeQuotas(email)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	jsonObj(c, gin.H{"nodeQuotas": views, "nodeId": nodeID, "pending": pending}, nil)
+	notifyClientsChanged()
+}
+
+func (a *ClientController) resetAllNodeQuotas(c *gin.Context) {
+	email := c.Param("email")
+	pending, err := a.inboundService.ResetAllClientNodeTraffic(c.Request.Context(), email)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	views, err := a.inboundService.GetClientNodeQuotas(email)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	jsonObj(c, gin.H{"nodeQuotas": views, "pendingNodeIds": pending}, nil)
+	notifyClientsChanged()
 }
 
 func (a *ClientController) getByTgId(c *gin.Context) {

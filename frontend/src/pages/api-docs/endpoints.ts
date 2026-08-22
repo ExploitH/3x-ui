@@ -831,6 +831,54 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'GET',
+        path: '/panel/api/clients/nodeQuotas/:email',
+        summary:
+          'Return per-physical-node quota configuration, upload/download usage, remaining state, and node-local enforcement status for one client.',
+        params: [
+          { name: 'email', in: 'path', type: 'string', desc: 'Client email (unique identifier).' },
+        ],
+        response:
+          '{\n  "success": true,\n  "obj": {\n    "nodeQuotas": [\n      { "nodeId": 7, "nodeName": "HK", "totalBytes": 107374182400, "resetPolicy": "monthly", "resetDay": 15, "up": 32212254720, "down": 21474836480, "blocked": false, "reason": "" }\n    ]\n  }\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/nodeQuotas/:email',
+        summary:
+          'Atomically replace all per-node quotas. totalBytes=0 means unlimited. Quota changes never toggle the global client enable flag; pendingNodeIds reports remote node mutations waiting for retry.',
+        params: [
+          { name: 'email', in: 'path', type: 'string', desc: 'Client email (unique identifier).' },
+          {
+            name: 'nodeQuotas',
+            in: 'body (json)',
+            type: 'object[]',
+            desc: 'Full replacement rows: { nodeId, totalBytes, resetPolicy: never|hourly|daily|weekly|monthly, resetDay: 1..31 }. Empty array removes every node quota.',
+          },
+        ],
+        body: '{\n  "nodeQuotas": [\n    { "nodeId": 7, "totalBytes": 107374182400, "resetPolicy": "monthly", "resetDay": 15 },\n    { "nodeId": 8, "totalBytes": 0, "resetPolicy": "never", "resetDay": 1 }\n  ]\n}',
+        response: '{\n  "success": true,\n  "obj": { "nodeQuotas": [], "pendingNodeIds": [] }\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/nodeQuotas/:email/reset/:nodeId',
+        summary:
+          'Reset usage for one physical node only. If that node was blocked solely by node quota exhaustion, its access is restored subject to global, expiry, and admin gates.',
+        params: [
+          { name: 'email', in: 'path', type: 'string', desc: 'Client email.' },
+          { name: 'nodeId', in: 'path', type: 'number', desc: 'Physical node ID.' },
+        ],
+        response:
+          '{\n  "success": true,\n  "obj": { "nodeId": 7, "pending": false, "nodeQuotas": [] }\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/nodeQuotas/:email/resetAll',
+        summary:
+          'Reset usage for every configured physical node of one client. Global traffic counters and raw node baselines remain unchanged.',
+        params: [{ name: 'email', in: 'path', type: 'string', desc: 'Client email.' }],
+        response: '{\n  "success": true,\n  "obj": { "pendingNodeIds": [], "nodeQuotas": [] }\n}',
+      },
+      {
+        method: 'GET',
         path: '/panel/api/clients/get/tgId/:tgId',
         summary:
           'Fetch clients by Telegram user ID. Returns an array since multiple clients can share the same Telegram ID.',
