@@ -451,8 +451,15 @@ func (s *NodeService) Create(n *model.Node) error {
 		return err
 	}
 	db := database.GetDB()
+	requestedEnable := n.Enable
 	if !nodetoken.Enabled() {
-		return db.Create(n).Error
+		if err := db.Create(n).Error; err != nil {
+			return err
+		}
+		if !requestedEnable {
+			return db.Model(model.Node{}).Where("id = ?", n.Id).Update("enable", false).Error
+		}
+		return nil
 	}
 	plaintext := n.ApiToken
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -462,6 +469,14 @@ func (s *NodeService) Create(n *model.Node) error {
 		defer func() { n.ApiToken = plaintext }()
 		if err := tx.Create(n).Error; err != nil {
 			return err
+		}
+		if !requestedEnable {
+			// GORM applies the model's default:true to a zero-value bool on
+			// INSERT. Re-assert an explicitly requested disabled node before
+			// any sync worker can observe the row.
+			if err := tx.Model(model.Node{}).Where("id = ?", n.Id).Update("enable", false).Error; err != nil {
+				return err
+			}
 		}
 		enc, err := nodetoken.Encrypt(n.Id, plaintext)
 		if err != nil {

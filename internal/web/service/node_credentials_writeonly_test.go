@@ -191,6 +191,31 @@ func TestNodeUpdateRequiresTokenWhenNoStoredTokenAndMtlsDisabled(t *testing.T) {
 	}
 }
 
+func TestNodeCreatePreservesExplicitDisabledState(t *testing.T) {
+	setupConflictDB(t)
+	svc := &NodeService{}
+	token := "disabled-node-token"
+	view, err := svc.CreateFromRequest(&NodeMutationRequest{
+		Name:          "disabled-create",
+		Scheme:        "https",
+		Address:       "127.0.0.1",
+		Port:          2099,
+		ApiToken:      &token,
+		Enable:        false,
+		TlsVerifyMode: "skip",
+	})
+	if err != nil {
+		t.Fatalf("create disabled node: %v", err)
+	}
+	var node model.Node
+	if err := database.GetDB().Where("id = ?", view.Id).First(&node).Error; err != nil {
+		t.Fatalf("load disabled node: %v", err)
+	}
+	if node.Enable {
+		t.Fatalf("created node enable=%v, want false", node.Enable)
+	}
+}
+
 func rawStoredNodeToken(t *testing.T, id int) string {
 	t.Helper()
 	var n model.Node
