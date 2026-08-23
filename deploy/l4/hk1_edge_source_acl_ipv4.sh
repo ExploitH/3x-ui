@@ -16,6 +16,7 @@ RELAY_DROPIN_DIR_WAS_PRESENT=0
 [ -d "$RELAY_DROPIN_DIR" ] && RELAY_DROPIN_DIR_WAS_PRESENT=1
 STATE_DIR=/var/lib/neko-hk1-edge-acl-ipv4
 STATE=$STATE_DIR/last-backup
+CONFIG_DIR=/etc/sing-box/conf
 TRUSTED_RELAY_IPV4S='141.11.148.116'
 PROXY_TCP_PORTS='8881,8886,8889,8890,8891,28886,28887'
 DISABLED_TCP_PORTS='8884,8885'
@@ -24,10 +25,27 @@ DISABLED_UDP_PORTS='8885'
 BACKUP=/root/neko-vpn-backup-$(date -u +%Y%m%dT%H%M%SZ)-hk1-edge-acl-ipv4
 
 require() { command -v "$1" >/dev/null || { echo "missing command: $1" >&2; exit 1; }; }
-for command in nft systemctl install mkdir rm cp sha256sum sed awk tr grep; do require "$command"; done
+for command in nft systemctl install mkdir rm cp sha256sum sed awk tr grep mktemp; do require "$command"; done
 [ "$(id -u)" -eq 0 ] || { echo 'must run as root' >&2; exit 1; }
 
 service_state() { systemctl is-active "$1" 2>/dev/null || true; }
+
+config_signature() {
+  local path tmp
+  local found=0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/neko-hk1-config.XXXXXX")
+  for path in "$CONFIG_DIR"/*; do
+    [ -f "$path" ] || continue
+    found=1
+    sha256sum "$path" >> "$tmp"
+  done
+  if [ "$found" -eq 0 ]; then
+    rm -f "$tmp"
+    return 1
+  fi
+  sha256sum "$tmp" | awk '{print $1}'
+  rm -f "$tmp"
+}
 
 write_rules() {
   cat > "$RULES" <<EOF
@@ -116,7 +134,7 @@ apply() {
   printf '%s\n' "$(service_state singbox-adapter.service)" > "$BACKUP/adapter.service.before"
   [ "$(cat "$BACKUP/singbox.service.before")" = active ] || { echo 'sing-box.service is not active; refusing ACL' >&2; exit 1; }
   [ "$(cat "$BACKUP/us-relay.service.before")" = active ] || { echo 'neko-us-relay.service is not active; refusing ACL' >&2; exit 1; }
-  sha256sum /etc/sing-box/conf/config.json > "$BACKUP/singbox-config.sha256.before"
+  config_signature > "$BACKUP/singbox-config.sha256.before"
   nft list ruleset > "$BACKUP/nft-ruleset.before"
   trap 'rc=$?; if [ "$rc" -ne 0 ]; then rollback || rc=70; fi; exit "$rc"' EXIT
   write_rules
@@ -140,7 +158,10 @@ apply() {
   [ "$(service_state sing-box.service)" = "$(cat "$BACKUP/singbox.service.before")" ]
   [ "$(service_state neko-us-relay.service)" = "$(cat "$BACKUP/us-relay.service.before")" ]
   [ "$(service_state singbox-adapter.service)" = "$(cat "$BACKUP/adapter.service.before")" ]
-  sha256sum -c "$BACKUP/singbox-config.sha256.before" >/dev/null
+  [ "$(config_signature)" = "$(cat "$BACKUP/singbox-config.sha256.before")" ] || {
+    echo 'sing-box config directory changed; refusing success' >&2
+    exit 1
+  }
   singbox_requires=$(systemctl show -p Requires --value sing-box.service) || { echo 'cannot inspect sing-box Requires; refusing success' >&2; exit 1; }
   if ! grep -Fxq 'neko-hk1-edge-acl-ipv4.service' <<<"$(tr ' ' '\n' <<<"$singbox_requires")"; then
     echo 'sing-box does not require the HK1 ACL unit; refusing success' >&2

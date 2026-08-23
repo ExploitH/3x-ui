@@ -16,6 +16,7 @@ setattr(module, 'HOSTS', {'91.229.132.66'})
 setattr(module, 'TARGET_MARKER', 'HK1')
 setattr(module, 'IPV4_ONLY', True)
 setattr(module, 'EXCLUDE_LABEL_MARKERS', ('SHADOWSOCKS', 'SHADOWTLS'))
+setattr(module, 'RELAY_LABEL_MARKERS', ('中转', 'RELAY'))
 setattr(module, 'DOMAIN', 'edge-hk1.427357.xyz')
 setattr(module, 'PORT_MAP', {
     8881: 43881,

@@ -16,6 +16,7 @@ setattr(module, 'HOSTS', {'91.229.132.66'})
 setattr(module, 'TARGET_MARKER', 'HK1')
 setattr(module, 'IPV4_ONLY', True)
 setattr(module, 'EXCLUDE_LABEL_MARKERS', ('SHADOWSOCKS', 'SHADOWTLS'))
+setattr(module, 'RELAY_LABEL_MARKERS', ('中转', 'RELAY'))
 setattr(module, 'DOMAIN', 'edge-hk1.427357.xyz')
 setattr(module, 'PORT_MAP', {8881: 43881, 8882: 43882, 8883: 43883, 8886: 43886, 8889: 43889, 8890: 43890, 8891: 43891, 28882: 43892, 28883: 43893, 28884: 43894, 28885: 43895, 28886: 43896, 28887: 43897})
 
@@ -35,11 +36,19 @@ class HK1SelectorTest(unittest.TestCase):
 
     def test_relay_ports_are_mapped(self) -> None:
         for old_port in (28882, 28883, 28884, 28885, 28886, 28887):
-            line = f'vless://opaque@91.229.132.66:{old_port}#HK1入口 relay IPv4 {old_port}'
+            line = f'vless://opaque@91.229.132.66:{old_port}#🇭🇰 HK1入口 → 🇺🇸 US2出口 · Hysteria2 · 中转'
             candidate, changed = module.replace_uri_endpoint(line)
             self.assertTrue(changed)
             parsed = urllib.parse.urlsplit(candidate)
             self.assertEqual((parsed.hostname, parsed.port), (module.DOMAIN, module.PORT_MAP[old_port]))
+
+    def test_already_migrated_relay_is_idempotent(self) -> None:
+        line = 'hy2://opaque@edge-hk1.427357.xyz:43892#🇭🇰 HK1入口 → 🇺🇸 US2出口 · Hysteria2 · 中转'
+        self.assertEqual(module.replace_uri_endpoint(line), (line, False))
+
+    def test_jp_relay_is_unchanged(self) -> None:
+        line = 'hy2://opaque@91.229.132.66:28882#🇯🇵 JP2*入口 → 🇺🇸 US2出口 · Hysteria2 · 中转'
+        self.assertEqual(module.replace_uri_endpoint(line), (line, False))
 
     def test_shadowsocks_and_shadowtls_are_not_enabled(self) -> None:
         for label, line in (

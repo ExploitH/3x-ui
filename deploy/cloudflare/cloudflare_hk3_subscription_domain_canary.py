@@ -22,6 +22,7 @@ HOSTS = {"39.109.50.213", "2a0f:1cc6:b240:201::240"}
 TARGET_MARKER = "HK3"
 IPV4_ONLY = False
 EXCLUDE_LABEL_MARKERS: tuple[str, ...] = ()
+RELAY_LABEL_MARKERS: tuple[str, ...] = ()
 CANARY_NAME = "hk3-subscription-domain"
 CANARY_STATUS = "HK3_SUBSCRIPTION_DOMAIN_CANARY"
 # Empty in the direct-domain canary.  The HK2 edge wrapper sets this to the
@@ -135,22 +136,30 @@ def label(line: str) -> str:
     return urllib.parse.unquote(line.rsplit("#", 1)[-1]) if "#" in line else ""
 
 
+def selected_label(endpoint_label: str) -> bool:
+    upper_label = endpoint_label.upper()
+    if TARGET_MARKER not in upper_label or any(marker.upper() in upper_label for marker in EXCLUDE_LABEL_MARKERS):
+        return False
+    if not IPV4_ONLY or "IPV4" in upper_label:
+        return True
+    return any(marker.upper() in upper_label for marker in RELAY_LABEL_MARKERS)
+
+
 def replace_uri_endpoint(line: str) -> tuple[str, bool]:
     endpoint_label = label(line)
-    upper_label = endpoint_label.upper()
-    if (
-        TARGET_MARKER not in upper_label
-        or any(marker.upper() in upper_label for marker in EXCLUDE_LABEL_MARKERS)
-        or (IPV4_ONLY and "IPV4" not in upper_label)
-    ):
+    if not selected_label(endpoint_label):
         return line, False
     parsed = urllib.parse.urlsplit(line)
-    if parsed.hostname not in HOSTS:
-        raise RuntimeError(f"HK3 URI has unexpected host for label {label(line)!r}")
     try:
         old_port = parsed.port
     except ValueError as exc:
         raise RuntimeError("HK3 URI has malformed port") from exc
+    if parsed.hostname == DOMAIN:
+        if not PORT_MAP or old_port in PORT_MAP.values():
+            return line, False
+        raise RuntimeError(f"HK3 URI has unexpected already-migrated port for label {label(line)!r}")
+    if parsed.hostname not in HOSTS:
+        raise RuntimeError(f"HK3 URI has unexpected host for label {label(line)!r}")
     if PORT_MAP:
         if old_port is None or old_port not in PORT_MAP:
             raise RuntimeError(f"HK3 URI has unexpected port for label {label(line)!r}")
@@ -208,13 +217,17 @@ def clash_candidate(raw: bytes) -> tuple[bytes, int]:
     for proxy in candidate.get("proxies") or []:
         name = str(proxy.get("name") or "")
         upper_name = name.upper()
-        if (
-            TARGET_MARKER not in upper_name
-            or any(marker.upper() in upper_name for marker in EXCLUDE_LABEL_MARKERS)
-            or (IPV4_ONLY and "IPV4" not in upper_name)
-        ):
+        if not selected_label(name):
             continue
         host = str(proxy.get("server") or "")
+        if host == DOMAIN:
+            try:
+                current_port = int(proxy.get("port"))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"HK3 Clash proxy has malformed already-migrated port for name {name!r}") from exc
+            if not PORT_MAP or current_port in PORT_MAP.values():
+                continue
+            raise RuntimeError(f"HK3 Clash proxy has unexpected already-migrated port for name {name!r}")
         if host not in HOSTS:
             raise RuntimeError(f"HK3 Clash proxy has unexpected host for name {name!r}")
         old_port = proxy.get("port")
@@ -255,19 +268,16 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
         for old, new in zip(old_lines, new_lines):
             old_label = label(old)
             upper_label = old_label.upper()
-            if (
-                TARGET_MARKER in upper_label
-                and not any(marker.upper() in upper_label for marker in EXCLUDE_LABEL_MARKERS)
-                and (not IPV4_ONLY or "IPV4" in upper_label)
-            ):
+            if selected_label(old_label):
                 old_u, new_u = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
-                if new_u.hostname != DOMAIN or old_u.hostname not in HOSTS:
+                if new_u.hostname != DOMAIN or old_u.hostname not in HOSTS | {DOMAIN}:
                     raise RuntimeError(f"{fmt} HK3 host invariant failed")
-                expected_port = (
-                    PORT_MAP.get(old_u.port, old_u.port)
-                    if PORT_MAP and old_u.port is not None
-                    else old_u.port
-                )
+                if PORT_MAP and old_u.port in PORT_MAP:
+                    expected_port = PORT_MAP[old_u.port]
+                elif old_u.port in PORT_MAP.values():
+                    expected_port = old_u.port
+                else:
+                    expected_port = old_u.port
                 if (new_u.scheme, new_u.username, new_u.password, new_u.port, new_u.query, new_u.fragment) != (old_u.scheme, old_u.username, old_u.password, expected_port, old_u.query, old_u.fragment):
                     raise RuntimeError(f"{fmt} credential/query invariant failed")
             elif old != new:
@@ -281,16 +291,15 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
     for old, new in zip(old_proxies, new_proxies):
         old_name = str(old.get("name") or "")
         upper_name = old_name.upper()
-        if (
-            TARGET_MARKER in upper_name
-            and not any(marker.upper() in upper_name for marker in EXCLUDE_LABEL_MARKERS)
-            and (not IPV4_ONLY or "IPV4" in upper_name)
-        ):
+        if selected_label(old_name):
             restored = dict(new)
             restored["server"] = old.get("server")
             if PORT_MAP:
                 try:
-                    expected_port = PORT_MAP[int(old.get("port"))]
+                    old_port = int(old.get("port"))
+                    expected_port = PORT_MAP.get(old_port, old_port)
+                    if old_port not in PORT_MAP and old_port not in PORT_MAP.values():
+                        raise KeyError(old_port)
                 except (TypeError, ValueError, KeyError) as exc:
                     raise RuntimeError("Clash HK3 port invariant failed") from exc
                 if new.get("port") != expected_port:

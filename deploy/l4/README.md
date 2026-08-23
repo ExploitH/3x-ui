@@ -176,7 +176,11 @@ HK2:43897/tcp       → HK1:28887/tcp      HK1→US3 relay Reality
 The HK1 source ACL protects all listed IPv4 direct and relay ports and trusts
 only HK2 `141.11.148.116`. It leaves SSH, local DNS/AI DNS, TCP/80/16606,
 CDT forwarding, outbound HK→JP AI traffic, and the IPv6 path outside this
-IPv4 table. The ACL installs separate `Requires=` drop-ins for both
+IPv4 table. The Subscription selector recognizes HK1 relay labels containing
+`中转`/`RELAY` separately from direct labels containing `IPv4`, so IPv6 rows
+and JP1/JP1*/JP2 relay rows are not accidentally selected. The selector is
+idempotent for rows already using the edge domain. The ACL installs separate
+`Requires=` drop-ins for both
 `sing-box.service` and `neko-us-relay.service`; it must not be applied as a
 sing-box-only ACL because the relay service has its own config/process.
 
@@ -185,3 +189,8 @@ this canary deliberately does not enable **Shadowsocks or ShadowTLS**. No `43884
 selector excludes `Shadowsocks` and `ShadowTLS` rows, and the HK1 IPv4 ACL
 drops direct TCP/UDP `8884/8885`. The IPv6 rows remain outside this IPv4
 canary and are not claimed as migrated.
+
+HK1 uses a split sing-box configuration under `/etc/sing-box/conf/`; the ACL
+helper hashes all regular configuration fragments as one non-empty signature
+before and after installation instead of assuming a monolithic
+`config.json`.
