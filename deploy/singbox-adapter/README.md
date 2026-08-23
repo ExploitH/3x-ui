@@ -40,12 +40,12 @@ The capability becomes `mode=traffic-readonly` and `perClientTraffic=true`, but
 `clientCrud=false` and `clientEnable=false` remain false; the Master must not
 enable this Node as a full managed node.
 
-All requests require `Authorization: Bearer ***`. The default command wiring rejects
-mutations with HTTP 405. The library has an explicit, non-default managed-client
-enable seam, but `cmd/singbox-adapter` does not construct it yet; enabling that seam
-requires a later production canary with a canonical managed-state file, atomic
-config rollback, sing-box validation, reload, and health callbacks. The adapter
-never exposes user UUID/password fields in API responses.
+All requests require an adapter bearer token. The default command wiring rejects
+mutations with HTTP 405 because `SINGBOX_ADAPTER_MANAGED` defaults to false. The
+library and CLI contain an explicit managed-client seam, but it is not enabled on
+the HK3 production service; enabling it requires a later canary with a canonical
+managed-state file, atomic config rollback, sing-box validation, reload, and health
+callbacks. The adapter never exposes user UUID/password fields in API responses.
 
 ## Build
 
