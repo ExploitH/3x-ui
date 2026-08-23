@@ -16,6 +16,8 @@ export default defineConfig({
   },
   test: {
     globals: false,
+    // Cold jsdom/AntD form mounts can exceed Vitest's 5s default on CI.
+    testTimeout: 30_000,
     // Keep jsdom-heavy form tests within the memory budget of local and CI runners.
     maxWorkers: 2,
     projects: [
