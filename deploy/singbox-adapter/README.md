@@ -111,6 +111,24 @@ ready. With valid V2Ray API per-client stats it additionally reports
 Master managed gate to evaluate it. Node quota block/reset requests carry an
 internal mutation reason so quota reset does not restore an admin-disabled user.
 
-The default process remains read-only and does not construct this seam. Traffic
-snapshot is read-only and requires the explicit V2Ray API configuration above.
-Relay-to-exit identity propagation remains a separate gate.
+The rollback-capable HK3 readonly upgrade helper is tracked at
+`deploy/singbox-adapter/hk3_singbox_adapter_upgrade_readonly.sh`. It refuses to
+run when `SINGBOX_ADAPTER_MANAGED` is true, preserves the existing token/env/config,
+backs up the binary/unit/token/env under `/root/neko-vpn-backup-<UTC>-singbox-adapter-*`,
+verifies the release archive and `SOURCE_COMMIT`, and checks health, capabilities,
+wrong-token rejection, mutation HTTP 405, Master/sing-box state, and config/token
+hashes. On failure it restores the four backed-up adapter files and the prior
+systemd state. It never edits the sing-box data-plane config or any JP1* relay.
+
+Example canary invocation (run through the saved HK3 SSH profile, not by putting
+credentials in argv):
+
+```bash
+bash deploy/singbox-adapter/hk3_singbox_adapter_upgrade_readonly.sh \
+  https://github.com/ExploitH/3x-ui/releases/download/hk3-singbox-adapter-42cc46ff/hk3-singbox-adapter-42cc46ff.tar.gz \
+  68798814bf0bea64a462f15398a9d61dd4bf45b33282386f5539ef3039c1bf99 \
+  42cc46ffb4f4c530e1d62959ac6aaeb61a47afd4
+```
+
+The default process remains read-only and traffic snapshot remains read-only;
+relay-to-exit identity propagation is a separate gate.
