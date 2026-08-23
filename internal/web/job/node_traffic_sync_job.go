@@ -415,12 +415,12 @@ func (j *NodeTrafficSyncJob) syncOne(mgr *runtime.Manager, n *model.Node, doIpSy
 		j.structural.set()
 	}
 
-	// Optional managed sing-box accounting is deliberately a side path. Legacy
-	// 3x-ui and traffic-readonly adapters are skipped by the capability seam;
+	// Optional sing-box accounting is deliberately a side path. It accepts a
+	// traffic-readonly adapter because accounting does not require client mutation;
 	// malformed/transport errors are visible but must not stop the existing
 	// Xray/3x-ui traffic sync for this node.
-	if _, managedErr := j.inboundService.ApplyManagedSingboxTrafficFromRemote(ctx, n.Id, rt); managedErr != nil {
-		logger.Warningf("node traffic sync: managed sing-box accounting for %s failed: %v", n.Name, managedErr)
+	if _, trafficErr := j.inboundService.ApplySingboxTrafficFromRemote(ctx, n.Id, rt); trafficErr != nil {
+		logger.Warningf("node traffic sync: sing-box accounting for %s failed: %v", n.Name, trafficErr)
 	}
 
 	// The traffic merge above can create a node-quota block. Apply that state

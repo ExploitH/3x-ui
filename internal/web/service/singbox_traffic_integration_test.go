@@ -10,12 +10,44 @@ import (
 )
 
 type managedSingboxRemoteStub struct {
-	snapshot *runtime.SingboxTrafficSnapshot
-	err      error
+	snapshot        *runtime.SingboxTrafficSnapshot
+	err             error
+	trafficSnapshot *runtime.SingboxTrafficSnapshot
+	trafficErr      error
 }
 
 func (s managedSingboxRemoteStub) FetchManagedSingboxTrafficSnapshot(context.Context) (*runtime.SingboxTrafficSnapshot, error) {
 	return s.snapshot, s.err
+}
+
+func (s managedSingboxRemoteStub) FetchSingboxTrafficSource(context.Context) (*runtime.SingboxTrafficSnapshot, error) {
+	return s.trafficSnapshot, s.trafficErr
+}
+
+func TestApplySingboxTrafficFromRemoteReadonlySourceUsesTransactionalAccounting(t *testing.T) {
+	db := initTrafficTestDB(t)
+	client := model.ClientRecord{Email: "alice@example.com", Enable: true}
+	if err := db.Create(&client).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &InboundService{}
+	first := managedSingboxRemoteStub{trafficSnapshot: singboxServiceSnapshot(100, 200, 1, 1)}
+	applied, err := svc.ApplySingboxTrafficFromRemote(context.Background(), 7, first)
+	if err != nil || applied {
+		t.Fatalf("first apply=%v err=%v", applied, err)
+	}
+	second := managedSingboxRemoteStub{trafficSnapshot: singboxServiceSnapshot(130, 250, 1, 1)}
+	applied, err = svc.ApplySingboxTrafficFromRemote(context.Background(), 7, second)
+	if err != nil || !applied {
+		t.Fatalf("second apply=%v err=%v", applied, err)
+	}
+	var usage model.ClientNodeUsage
+	if err := db.Where("client_id = ? AND node_id = ?", client.Id, 7).First(&usage).Error; err != nil {
+		t.Fatal(err)
+	}
+	if usage.Up != 30 || usage.Down != 50 {
+		t.Fatalf("usage=%+v", usage)
+	}
 }
 
 func TestFetchManagedSingboxTrafficSnapshotSkipsUnsupported(t *testing.T) {

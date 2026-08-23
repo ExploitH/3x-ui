@@ -794,6 +794,20 @@ func (r *Remote) FetchManagedSingboxTrafficSnapshot(ctx context.Context) (*Singb
 	return r.FetchSingboxTrafficSnapshot(ctx)
 }
 
+// FetchSingboxTrafficSource reads the optional per-client traffic source without
+// requiring client CRUD or client enable mutation. A traffic-readonly adapter is
+// valid for accounting only; it must never satisfy the full managed-node gate.
+func (r *Remote) FetchSingboxTrafficSource(ctx context.Context) (*SingboxTrafficSnapshot, error) {
+	caps, err := r.FetchCapabilitiesCached(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if caps == nil || caps.TrafficSource != singboxTrafficSource || !caps.PerClientTraffic {
+		return nil, ErrSingboxTrafficUnsupported
+	}
+	return r.FetchSingboxTrafficSnapshot(ctx)
+}
+
 type TrafficSnapshot struct {
 	Inbounds       []*model.Inbound
 	OnlineEmails   []string
