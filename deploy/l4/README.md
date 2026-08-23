@@ -1,39 +1,30 @@
-# HK2 → HK3 L4 edge canary
+## HK3 source ACL
 
-This is a separate, rollback-capable canary for a future source-IP restriction
-on HK3. It was not installed by the audit phase.
+After the HK2 edge canary passed real VLESS Reality, Hysteria2 and TUIC client
+probes, the source ACL can be installed on HK3:
 
-Proposed path:
-
-```text
-Client
-  ↓ edge-hk3.427357.xyz
-HK2 141.11.148.116:38881/tcp → HK3 39.109.50.213:8881/tcp
-HK2 141.11.148.116:38882/udp → HK3 39.109.50.213:8882/udp
-HK2 141.11.148.116:38883/udp → HK3 39.109.50.213:8883/udp
+```bash
+bash deploy/l4/hk3_edge_source_acl.sh apply
+bash deploy/l4/hk3_edge_source_acl.sh status
+bash deploy/l4/hk3_edge_source_acl.sh rollback
 ```
 
-The helper uses independent chains:
+The ACL is an independent `inet neko_hk3_edge_acl` table:
 
 ```text
-NEKO_HK3EDGE_DNAT
-NEKO_HK3EDGE_SNAT
-NEKO_HK3EDGE_FWD
+allow loopback
+allow source 141.11.148.116 to TCP/8881 and UDP/8882,8883
+drop all other TCP/8881 and UDP/8882,8883
 ```
 
-It refuses to overwrite an existing helper/unit/chain, records the existing
-iptables snapshot and sing-box/CDT invariants, changes no sing-box config, and
-rolls back only its own resources on failure. It never calls the existing
-`neko-cdt-forward` helper and therefore does not flush `NEKO_CDT_*` chains.
+The default input policy remains untouched. SSH/22, Master/adapter loopback,
+DNS/NTP, outbound Node→Node traffic, HK→JP AI traffic and every other port are
+outside the table. JP1* relay nodes are not involved.
 
-Before use, create a separately reviewed DNS record such as
-`edge-hk3.427357.xyz` pointing to HK2, then execute the helper through the
-trusted `hk-vps-116` SSH profile. Do not switch the existing
-`hk3.427357.xyz` Subscription entry until the front path has been tested.
+The script refuses an existing same-name table/files, runs `nft -c` before
+loading, stores the original ruleset and service/config invariants under a
+root-only backup, and records the backup path under
+`/var/lib/neko-hk3-edge-acl/last-backup`. Rollback verifies the current rules
+and unit hashes before removing only this table/unit.
 
-The helper does not alter HK3 firewall rules. A later HK3 source restriction
-must be a separate transaction with a persistent rollback rule and explicit
-allowlist for HK2, SSH, Master/health paths, DNS/NTP, Node→Node, and the
-HK→JP AI path.
-
-JP1* relay nodes are explicitly out of scope.
+Do not install the ACL before the HK2 edge has passed all three protocol probes.
