@@ -21,13 +21,14 @@ import (
 const readonlyPanelVersion = "singbox-adapter-readonly"
 
 type ReadOnlyOptions struct {
-	ConfigPath          string
-	ConfigJSON          []byte
-	Token               string
-	BasePath            string
-	V2RayAPIAddress     string
-	StatsProvider       TrafficStatsProvider
-	ManagedRelayMutator *ManagedRelayMutator
+	ConfigPath           string
+	ConfigJSON           []byte
+	Token                string
+	BasePath             string
+	V2RayAPIAddress      string
+	StatsProvider        TrafficStatsProvider
+	ManagedRelayMutator  *ManagedRelayMutator
+	DirectInboundMutator *DirectInboundMutator
 }
 
 type ReadOnlyHandler struct {
@@ -39,6 +40,7 @@ type ReadOnlyHandler struct {
 	stats          TrafficStatsProvider
 	statsCloser    func() error
 	managedMutator *ManagedRelayMutator
+	directMutator  *DirectInboundMutator
 }
 
 type singboxConfig struct {
@@ -128,6 +130,7 @@ func NewReadOnlyHandler(options ReadOnlyOptions) (*ReadOnlyHandler, error) {
 		startedAt:      time.Now(),
 		stats:          options.StatsProvider,
 		managedMutator: options.ManagedRelayMutator,
+		directMutator:  options.DirectInboundMutator,
 	}
 	if h.stats == nil && strings.TrimSpace(options.V2RayAPIAddress) != "" {
 		client, err := dialV2RayStatsClient(context.Background(), strings.TrimSpace(options.V2RayAPIAddress))
@@ -175,7 +178,7 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, h.basePath)
-	managedMutation := h.managedMutator != nil && r.Method == http.MethodPost && strings.HasPrefix(path, "panel/api/clients/")
+	managedMutation := (h.managedMutator != nil || h.directMutator != nil) && r.Method == http.MethodPost && strings.HasPrefix(path, "panel/api/clients/")
 	if r.Method != http.MethodGet && !managedMutation {
 		writeReadOnlyJSON(w, http.StatusMethodNotAllowed, readOnlyEnvelope{Success: false, Msg: "read-only adapter"})
 		return
@@ -307,15 +310,21 @@ func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
 	}
 	caps := readonlyCapabilities
 	managedReady := h.managedMutator != nil && h.managedMutator.Ready(context.Background()) == nil
+	directReady := h.directMutator != nil && h.directMutator.Ready(context.Background()) == nil
 	if managedReady {
 		caps.Mode = "managed"
 		caps.ClientCrud = true
+		caps.ClientEnable = true
+	} else if directReady {
+		caps.Mode = "managed-direct"
 		caps.ClientEnable = true
 	}
 	if h.stats != nil {
 		if _, err := buildTrafficPlan(cfg); err == nil {
 			if managedReady {
 				caps.Mode = "managed-traffic"
+			} else if directReady {
+				caps.Mode = "managed-direct-traffic"
 			} else {
 				caps.Mode = "traffic-readonly"
 			}
@@ -437,7 +446,12 @@ func (h *ReadOnlyHandler) handleManagedClientUpdate(w http.ResponseWriter, r *ht
 		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: err.Error()})
 		return
 	}
-	if _, err := h.managedStateAndScope(r, inboundIDs); err != nil {
+	if h.directMutator != nil {
+		if err := h.directMutator.AcceptsInboundIDs(inboundIDs); err != nil {
+			writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: err.Error()})
+			return
+		}
+	} else if _, err := h.managedStateAndScope(r, inboundIDs); err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "state store") {
 			status = http.StatusServiceUnavailable
@@ -456,6 +470,27 @@ func (h *ReadOnlyHandler) handleManagedClientUpdate(w http.ResponseWriter, r *ht
 	}
 	payload.Email = email
 	reason := r.Header.Get("X-3x-UI-Mutation-Reason")
+	if h.directMutator != nil {
+		var updateErr error
+		switch reason {
+		case "quota-block":
+			updateErr = h.directMutator.SetUserQuotaBlocked(r.Context(), email, true)
+		case "quota-reset":
+			updateErr = h.directMutator.SetUserQuotaBlocked(r.Context(), email, false)
+		default:
+			updateErr = h.directMutator.SetUserAdminEnabled(r.Context(), email, payload.Enable)
+		}
+		if updateErr != nil {
+			writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: updateErr.Error()})
+			return
+		}
+		obj := map[string]any{"email": canonicalRelayEmail(email), "enable": payload.Enable}
+		if reason == "quota-block" || reason == "quota-reset" {
+			obj["quotaBlocked"] = reason == "quota-block"
+		}
+		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: obj})
+		return
+	}
 	if reason == "quota-block" || reason == "quota-reset" {
 		if err := h.managedMutator.SetUserQuotaBlocked(r.Context(), email, reason == "quota-block"); err != nil {
 			writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})

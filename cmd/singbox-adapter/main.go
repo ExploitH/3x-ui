@@ -30,13 +30,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize managed adapter: %v", err)
 	}
+	directMutator, err := directMutatorFromEnvironment(configPath)
+	if err != nil {
+		log.Fatalf("initialize direct adapter: %v", err)
+	}
 
 	handler, err := singboxadapter.NewReadOnlyHandler(singboxadapter.ReadOnlyOptions{
-		ConfigPath:          configPath,
-		Token:               token,
-		BasePath:            basePath,
-		V2RayAPIAddress:     v2rayAPIAddress,
-		ManagedRelayMutator: managedMutator,
+		ConfigPath:           configPath,
+		Token:                token,
+		BasePath:             basePath,
+		V2RayAPIAddress:      v2rayAPIAddress,
+		ManagedRelayMutator:  managedMutator,
+		DirectInboundMutator: directMutator,
 	})
 	if err != nil {
 		log.Fatalf("initialize read-only adapter: %v", err)
