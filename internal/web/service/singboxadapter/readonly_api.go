@@ -77,6 +77,7 @@ type ReadOnlyInbound struct {
 	Protocol string `json:"protocol"`
 	Port     int    `json:"port"`
 	Users    int    `json:"users"`
+	Settings string `json:"settings,omitempty"`
 }
 
 type ReadOnlyCapabilities struct {
@@ -174,7 +175,7 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, h.basePath)
-	managedMutation := h.managedMutator != nil && r.Method == http.MethodPost && strings.HasPrefix(path, "panel/api/clients/update/")
+	managedMutation := h.managedMutator != nil && r.Method == http.MethodPost && strings.HasPrefix(path, "panel/api/clients/")
 	if r.Method != http.MethodGet && !managedMutation {
 		writeReadOnlyJSON(w, http.StatusMethodNotAllowed, readOnlyEnvelope{Success: false, Msg: "read-only adapter"})
 		return
@@ -192,7 +193,7 @@ func (h *ReadOnlyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"mode": "readonly"}})
 	default:
 		if managedMutation {
-			h.handleManagedClientUpdate(w, r, path)
+			h.handleManagedClientMutation(w, r, path)
 			return
 		}
 		http.NotFound(w, r)
@@ -252,12 +253,34 @@ func (h *ReadOnlyHandler) handleInboundList(w http.ResponseWriter) {
 			return
 		}
 		ids[id] = inbound.Tag
+		settings, err := h.inboundSettings(inbound)
+		if err != nil {
+			writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+			return
+		}
 		items = append(items, ReadOnlyInbound{
 			Id: id, Tag: inbound.Tag, Remark: inbound.Tag, Listen: inbound.Listen,
 			Protocol: inbound.Type, Port: inbound.ListenPort, Users: len(inbound.Users),
+			Settings: settings,
 		})
 	}
 	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: items})
+}
+
+func sanitizedInboundSettings(inbound singboxInbound) string {
+	names, err := inboundUserNames(inbound)
+	if err != nil || len(names) == 0 {
+		return `{"clients":[]}`
+	}
+	clients := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		clients = append(clients, map[string]any{"email": name, "enable": true})
+	}
+	encoded, err := json.Marshal(map[string]any{"clients": clients})
+	if err != nil {
+		return `{"clients":[]}`
+	}
+	return string(encoded)
 }
 
 func (h *ReadOnlyHandler) handleStatus(w http.ResponseWriter) {
@@ -283,14 +306,16 @@ func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
 		return
 	}
 	caps := readonlyCapabilities
-	if h.managedMutator != nil {
-		caps.Mode = "managed-client-enable"
+	managedReady := h.managedMutator != nil && h.managedMutator.Ready(context.Background()) == nil
+	if managedReady {
+		caps.Mode = "managed"
+		caps.ClientCrud = true
 		caps.ClientEnable = true
 	}
 	if h.stats != nil {
 		if _, err := buildTrafficPlan(cfg); err == nil {
-			if h.managedMutator != nil {
-				caps.Mode = "managed-client-enable-traffic"
+			if managedReady {
+				caps.Mode = "managed-traffic"
 			} else {
 				caps.Mode = "traffic-readonly"
 			}
@@ -299,6 +324,105 @@ func (h *ReadOnlyHandler) handleCapabilities(w http.ResponseWriter) {
 		}
 	}
 	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: caps})
+}
+
+func (h *ReadOnlyHandler) handleManagedClientMutation(w http.ResponseWriter, r *http.Request, path string) {
+	const prefix = "panel/api/clients/"
+	switch {
+	case path == prefix+"add":
+		h.handleManagedClientAdd(w, r)
+	case strings.HasPrefix(path, prefix+"update/"):
+		h.handleManagedClientUpdate(w, r, path)
+	case strings.HasSuffix(path, "/detach"):
+		h.handleManagedClientDetach(w, r, path)
+	case strings.HasPrefix(path, prefix+"del/"):
+		h.handleManagedClientDelete(w, r, path)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (h *ReadOnlyHandler) managedStateAndScope(r *http.Request, inboundIDs []int) (ManagedRelayState, error) {
+	if h.managedMutator == nil || h.managedMutator.State == nil {
+		return ManagedRelayState{}, errors.New("managed relay state store is unavailable")
+	}
+	state, err := h.managedMutator.State.Load(r.Context())
+	if err != nil {
+		return ManagedRelayState{}, err
+	}
+	wantID := stableInboundID(state.InboundTag)
+	if len(inboundIDs) != 1 || inboundIDs[0] != wantID {
+		return ManagedRelayState{}, errors.New("inbound does not belong to managed relay")
+	}
+	return state, nil
+}
+
+func (h *ReadOnlyHandler) handleManagedClientAdd(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Client     ManagedRelayClient `json:"client"`
+		InboundIDs []int              `json:"inboundIds"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&request); err != nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client add payload"})
+		return
+	}
+	state, err := h.managedStateAndScope(r, request.InboundIDs)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "state store") {
+			status = http.StatusServiceUnavailable
+		}
+		writeReadOnlyJSON(w, status, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	if err := h.managedMutator.AddClient(r.Context(), request.Client); err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(request.Client.Email), "enable": request.Client.Enable, "inboundTag": state.InboundTag}})
+}
+
+func (h *ReadOnlyHandler) handleManagedClientDetach(w http.ResponseWriter, r *http.Request, path string) {
+	const prefix = "panel/api/clients/"
+	email, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/detach"))
+	if err != nil || strings.TrimSpace(email) == "" {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client email"})
+		return
+	}
+	var request struct {
+		InboundIDs []int `json:"inboundIds"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&request); err != nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client detach payload"})
+		return
+	}
+	if _, err := h.managedStateAndScope(r, request.InboundIDs); err != nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	if err := h.managedMutator.DetachClient(r.Context(), email); err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "detached": true}})
+}
+
+func (h *ReadOnlyHandler) handleManagedClientDelete(w http.ResponseWriter, r *http.Request, path string) {
+	const prefix = "panel/api/clients/del/"
+	email, err := url.PathUnescape(strings.TrimPrefix(path, prefix))
+	if err != nil || strings.TrimSpace(email) == "" {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client email"})
+		return
+	}
+	if h.managedMutator == nil || h.managedMutator.State == nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: "managed relay state store is unavailable"})
+		return
+	}
+	if err := h.managedMutator.DeleteClient(r.Context(), email); err != nil {
+		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+		return
+	}
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "deleted": true}})
 }
 
 func (h *ReadOnlyHandler) handleManagedClientUpdate(w http.ResponseWriter, r *http.Request, path string) {
@@ -313,37 +437,44 @@ func (h *ReadOnlyHandler) handleManagedClientUpdate(w http.ResponseWriter, r *ht
 		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: err.Error()})
 		return
 	}
-	if h.managedMutator == nil || h.managedMutator.State == nil {
-		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: "managed relay state store is unavailable"})
+	if _, err := h.managedStateAndScope(r, inboundIDs); err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "state store") {
+			status = http.StatusServiceUnavailable
+		}
+		writeReadOnlyJSON(w, status, readOnlyEnvelope{Success: false, Msg: err.Error()})
 		return
 	}
-	state, err := h.managedMutator.State.Load(r.Context())
-	if err != nil {
-		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+	var payload ManagedRelayClient
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&payload); err != nil {
+		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "invalid client update payload"})
 		return
 	}
-	wantID := stableInboundID(state.InboundTag)
-	if len(inboundIDs) != 1 || inboundIDs[0] != wantID {
-		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "inbound does not belong to managed relay"})
-		return
-	}
-	var payload struct {
-		Email  string `json:"email"`
-		Enable *bool  `json:"enable"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&payload); err != nil || payload.Enable == nil {
-		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "client email and enable are required"})
-		return
-	}
-	if canonicalRelayEmail(payload.Email) != canonicalRelayEmail(email) {
+	if payload.Email != "" && canonicalRelayEmail(payload.Email) != canonicalRelayEmail(email) {
 		writeReadOnlyJSON(w, http.StatusBadRequest, readOnlyEnvelope{Success: false, Msg: "client email does not match path"})
 		return
 	}
-	if err := h.managedMutator.SetUserEnabled(r.Context(), email, *payload.Enable); err != nil {
+	payload.Email = email
+	reason := r.Header.Get("X-3x-UI-Mutation-Reason")
+	if reason == "quota-block" || reason == "quota-reset" {
+		if err := h.managedMutator.SetUserQuotaBlocked(r.Context(), email, reason == "quota-block"); err != nil {
+			writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
+			return
+		}
+		writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "quotaBlocked": reason == "quota-block"}})
+		return
+	}
+	var updateErr error
+	if strings.TrimSpace(payload.Auth) != "" || strings.TrimSpace(payload.Password) != "" {
+		updateErr = h.managedMutator.UpdateClient(r.Context(), email, payload)
+	} else {
+		updateErr = h.managedMutator.SetUserEnabled(r.Context(), email, payload.Enable)
+	}
+	if err := updateErr; err != nil {
 		writeReadOnlyJSON(w, http.StatusServiceUnavailable, readOnlyEnvelope{Success: false, Msg: err.Error()})
 		return
 	}
-	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "enable": *payload.Enable}})
+	writeReadOnlyJSON(w, http.StatusOK, readOnlyEnvelope{Success: true, Obj: map[string]any{"email": canonicalRelayEmail(email), "enable": payload.Enable}})
 }
 
 func parseInboundIDs(raw string) ([]int, error) {

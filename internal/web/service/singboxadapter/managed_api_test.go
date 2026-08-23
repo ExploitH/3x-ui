@@ -25,7 +25,7 @@ func TestManagedClientUpdateEndpointIsOptInAndNodeScoped(t *testing.T) {
 	capReq.Header.Set("Authorization", "Bearer adapter-test-token")
 	capResp := httptest.NewRecorder()
 	h.ServeHTTP(capResp, capReq)
-	if capResp.Code != http.StatusOK || !strings.Contains(capResp.Body.String(), `"clientEnable":true`) || strings.Contains(capResp.Body.String(), `"clientCrud":true`) {
+	if capResp.Code != http.StatusOK || !strings.Contains(capResp.Body.String(), `"clientEnable":true`) || !strings.Contains(capResp.Body.String(), `"clientCrud":true`) {
 		t.Fatalf("capabilities status=%d body=%s", capResp.Code, capResp.Body.String())
 	}
 	state, err := NewManagedRelayStateStore(statePath).Load(context.Background())

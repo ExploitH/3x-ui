@@ -119,7 +119,10 @@ type Remote struct {
 	egressResolver NodeEgressResolver
 }
 
-const remoteCapabilitiesCacheTTL = 60 * time.Second
+const (
+	nodeMutationReasonHeader   = "X-3x-UI-Mutation-Reason"
+	remoteCapabilitiesCacheTTL = 60 * time.Second
+)
 
 type RemoteInboundOption struct {
 	Id       int            `json:"id"`
@@ -266,6 +269,9 @@ func (r *Remote) do(ctx context.Context, method, path string, body any) (*envelo
 	}
 	if zstdEncoded {
 		req.Header.Set("Content-Encoding", wirecodec.EncodingZstd)
+	}
+	if reason := NodeMutationReason(ctx); reason != "" {
+		req.Header.Set(nodeMutationReasonHeader, reason)
 	}
 
 	client, err := r.httpClient()

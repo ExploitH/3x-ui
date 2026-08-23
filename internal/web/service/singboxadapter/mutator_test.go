@@ -95,6 +95,34 @@ func TestManagedRelayMutatorReloadFailureRollsBackBothFiles(t *testing.T) {
 	}
 }
 
+func TestManagedRelayMutatorHealthFailureReloadsRestoredConfig(t *testing.T) {
+	mutator, configPath, statePath := writeMutatorFixture(t)
+	originalConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadCalls := 0
+	mutator.Reload = func(context.Context) error {
+		reloadCalls++
+		return nil
+	}
+	mutator.Health = func(context.Context) error { return os.ErrInvalid }
+	if err := mutator.SetUserEnabled(context.Background(), "alice@example.com", false); err == nil {
+		t.Fatal("health failure accepted")
+	}
+	if reloadCalls != 2 {
+		t.Fatalf("reload calls=%d, want apply plus rollback reload", reloadCalls)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil || string(config) != string(originalConfig) {
+		t.Fatalf("config rollback=%q err=%v", config, err)
+	}
+	state, err := NewManagedRelayStateStore(statePath).Load(context.Background())
+	if err != nil || !state.Users[0].Enabled {
+		t.Fatalf("state rollback=%+v err=%v", state, err)
+	}
+}
+
 func TestManagedRelayMutatorRequiresReloadAndHealthCallbacks(t *testing.T) {
 	mutator, _, _ := writeMutatorFixture(t)
 	mutator.Reload = nil

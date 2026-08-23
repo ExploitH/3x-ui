@@ -424,7 +424,13 @@ func (s *InboundService) applyPendingNodeQuotaMutations(ctx context.Context, onl
 				stateErrs = append(stateErrs, fmt.Errorf("inbound %q: %s", inbound.Tag, reason))
 				continue
 			}
-			if err := rt.UpdateUser(ctx, inbound, record.Email, *payload); err != nil {
+			var mutationCtx context.Context
+			if state.Blocked {
+				mutationCtx = runtime.WithNodeMutationReason(ctx, runtime.MutationReasonQuotaBlock)
+			} else {
+				mutationCtx = runtime.WithNodeMutationReason(ctx, runtime.MutationReasonQuotaReset)
+			}
+			if err := rt.UpdateUser(mutationCtx, inbound, record.Email, *payload); err != nil {
 				action := "disable"
 				if !state.Blocked {
 					action = "restore"

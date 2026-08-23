@@ -89,8 +89,24 @@ Before starting it on HK3:
    its files.
 
 The default deployed command does not yet provide client CRUD, enable/disable,
-traffic reset, or provider billing import. The library contains only an opt-in
-client-enable seam for a later managed canary; the default process remains
-read-only. Traffic snapshot is read-only and requires the explicit V2Ray API
-configuration described above. Relay-to-exit identity propagation remains a
-separate gate.
+traffic reset, or provider billing import. The library now contains an opt-in
+managed canary seam with these mutation paths:
+
+```text
+POST <base>/panel/api/clients/add
+POST <base>/panel/api/clients/update/<email>?inboundIds=<id>
+POST <base>/panel/api/clients/<email>/detach
+POST <base>/panel/api/clients/del/<email>
+```
+
+The managed seam requires an explicit canonical state store, atomic config
+rollback, sing-box validation, reload callback, and health callback. It reports
+`clientCrud=true` and `clientEnable=true` only when those prerequisites are
+ready. With valid V2Ray API per-client stats it additionally reports
+`perClientTraffic=true` and `trafficSource=sing-box-v2ray-api`, allowing the
+Master managed gate to evaluate it. Node quota block/reset requests carry an
+internal mutation reason so quota reset does not restore an admin-disabled user.
+
+The default process remains read-only and does not construct this seam. Traffic
+snapshot is read-only and requires the explicit V2Ray API configuration above.
+Relay-to-exit identity propagation remains a separate gate.
