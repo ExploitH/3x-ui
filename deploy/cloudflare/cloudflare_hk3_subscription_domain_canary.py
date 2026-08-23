@@ -19,6 +19,9 @@ API_ROOT = "https://api.cloudflare.com/client/v4"
 ZONE_NAME = "427357.xyz"
 DOMAIN = "hk3.427357.xyz"
 HOSTS = {"39.109.50.213", "2a0f:1cc6:b240:201::240"}
+# Empty in the direct-domain canary.  The HK2 edge wrapper sets this to the
+# dedicated frontend ports; a non-empty map fails closed on unknown ports.
+PORT_MAP: dict[int, int] = {}
 KV_KEYS = (
     "sub:keys",
     "sub:payload:neko",
@@ -127,12 +130,22 @@ def label(line: str) -> str:
     return urllib.parse.unquote(line.rsplit("#", 1)[-1]) if "#" in line else ""
 
 
-def replace_uri_host(line: str) -> tuple[str, bool]:
+def replace_uri_endpoint(line: str) -> tuple[str, bool]:
     if "HK3" not in label(line).upper():
         return line, False
     parsed = urllib.parse.urlsplit(line)
     if parsed.hostname not in HOSTS:
         raise RuntimeError(f"HK3 URI has unexpected host for label {label(line)!r}")
+    try:
+        old_port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("HK3 URI has malformed port") from exc
+    if PORT_MAP:
+        if old_port is None or old_port not in PORT_MAP:
+            raise RuntimeError(f"HK3 URI has unexpected port for label {label(line)!r}")
+        new_port = PORT_MAP[old_port]
+    else:
+        new_port = old_port
     marker = line.find("://")
     if marker < 0:
         raise RuntimeError("URI has no authority separator")
@@ -153,8 +166,16 @@ def replace_uri_host(line: str) -> tuple[str, bool]:
     else:
         colon = hostport.rfind(":")
         port_suffix = hostport[colon:] if colon >= 0 else ""
-    replacement = line[:authority_start] + userinfo + DOMAIN + port_suffix + line[authority_end:]
+    if new_port is None:
+        new_port_suffix = port_suffix
+    else:
+        new_port_suffix = f":{new_port}"
+    replacement = line[:authority_start] + userinfo + DOMAIN + new_port_suffix + line[authority_end:]
     return replacement, True
+
+
+# Compatibility alias for callers from the first host-only canary.
+replace_uri_host = replace_uri_endpoint
 
 
 def uri_candidate(raw: bytes) -> tuple[bytes, int]:
@@ -162,7 +183,7 @@ def uri_candidate(raw: bytes) -> tuple[bytes, int]:
     changed = 0
     output = []
     for line in decoded.splitlines():
-        replacement, did_change = replace_uri_host(line)
+        replacement, did_change = replace_uri_endpoint(line)
         output.append(replacement)
         changed += int(did_change)
     candidate = "\n".join(output) + ("\n" if decoded.endswith(("\n", "\r")) else "")
@@ -180,6 +201,15 @@ def clash_candidate(raw: bytes) -> tuple[bytes, int]:
         host = str(proxy.get("server") or "")
         if host not in HOSTS:
             raise RuntimeError(f"HK3 Clash proxy has unexpected host for name {name!r}")
+        old_port = proxy.get("port")
+        if PORT_MAP:
+            try:
+                old_port_int = int(old_port)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"HK3 Clash proxy has malformed port for name {name!r}") from exc
+            if old_port_int not in PORT_MAP:
+                raise RuntimeError(f"HK3 Clash proxy has unexpected port for name {name!r}")
+            proxy["port"] = PORT_MAP[old_port_int]
         proxy["server"] = DOMAIN
         changed += 1
     return json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), changed
@@ -211,8 +241,13 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
                 old_u, new_u = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
                 if new_u.hostname != DOMAIN or old_u.hostname not in HOSTS:
                     raise RuntimeError(f"{fmt} HK3 host invariant failed")
-                if (new_u.scheme, new_u.username, new_u.password, new_u.port, new_u.query, new_u.fragment) != (old_u.scheme, old_u.username, old_u.password, old_u.port, old_u.query, old_u.fragment):
-                    raise RuntimeError(f"{fmt} HK3 credential/query invariant failed")
+                expected_port = (
+                    PORT_MAP.get(old_u.port, old_u.port)
+                    if PORT_MAP and old_u.port is not None
+                    else old_u.port
+                )
+                if (new_u.scheme, new_u.username, new_u.password, new_u.port, new_u.query, new_u.fragment) != (old_u.scheme, old_u.username, old_u.password, expected_port, old_u.query, old_u.fragment):
+                    raise RuntimeError(f"{fmt} credential/query invariant failed")
             elif old != new:
                 raise RuntimeError(f"{fmt} non-HK3 line changed")
     old_catalog = json.loads(before["sub:payload:clash"])
@@ -225,6 +260,14 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
         if "HK3" in str(old.get("name") or "").upper():
             restored = dict(new)
             restored["server"] = old.get("server")
+            if PORT_MAP:
+                try:
+                    expected_port = PORT_MAP[int(old.get("port"))]
+                except (TypeError, ValueError, KeyError) as exc:
+                    raise RuntimeError("Clash HK3 port invariant failed") from exc
+                if new.get("port") != expected_port:
+                    raise RuntimeError("Clash HK3 port invariant failed")
+                restored["port"] = old.get("port")
             if restored != old or new.get("server") != DOMAIN:
                 raise RuntimeError("Clash HK3 proxy invariant failed")
         elif old != new:
