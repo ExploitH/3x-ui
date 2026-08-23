@@ -21,6 +21,11 @@ func main() {
 	listen := envOr("SINGBOX_ADAPTER_LISTEN", "127.0.0.1:23854")
 	basePath := envOr("SINGBOX_ADAPTER_BASE_PATH", "/adapter/")
 	v2rayAPIAddress := strings.TrimSpace(os.Getenv("SINGBOX_ADAPTER_V2RAY_API"))
+	tlsCert := strings.TrimSpace(os.Getenv("SINGBOX_ADAPTER_TLS_CERT"))
+	tlsKey := strings.TrimSpace(os.Getenv("SINGBOX_ADAPTER_TLS_KEY"))
+	if (tlsCert == "") != (tlsKey == "") {
+		log.Fatalf("SINGBOX_ADAPTER_TLS_CERT and SINGBOX_ADAPTER_TLS_KEY must be set together")
+	}
 
 	token, err := readTokenFile(tokenPath)
 	if err != nil {
@@ -56,6 +61,13 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
+		if tlsCert != "" {
+			log.Printf("sing-box read-only adapter listening with TLS on %s", listen)
+			if err := server.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("adapter TLS server: %v", err)
+			}
+			return
+		}
 		log.Printf("sing-box read-only adapter listening on %s", listen)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("adapter server: %v", err)
