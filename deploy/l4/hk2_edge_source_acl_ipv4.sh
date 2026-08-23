@@ -108,7 +108,7 @@ apply() {
   trap - EXIT
   printf 'HK2_EDGE_ACL_IPV4_APPLIED\n'
   printf 'table=%s %s\n' "$FAMILY" "$TABLE"
-  printf 'trusted_hk2=%s\n' "$FRONTEND_IP"
+  printf 'trusted_hk1=%s\n' "$FRONTEND_IP"
   printf 'tcp_port=%s\n' "$PROXY_TCP_PORT"
   printf 'udp_ports=%s\n' "$PROXY_UDP_PORTS"
   printf 'service=%s\n' "$(service_state neko-hk2-edge-acl-ipv4.service)"
