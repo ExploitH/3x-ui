@@ -91,3 +91,36 @@ HK2:40891/tcp → JP3:8891/tcp
 The JP3 ACL explicitly protects TCP `8881,8885,8886,8889,8890,8891` and UDP
 `8882,8883,8885`, while leaving TCP/443 and the AI SNI service outside its
 table. JP3 IPv6, JP1* and all relay entries are outside this canary.
+
+## US2 IPv4-only canary
+
+US2 is an exit node used by existing HK1/JP1*/JP2* relay paths. Its canary
+therefore uses a fresh HK2 port range and an allowlist containing the existing
+relay source addresses; it must not use the JP3 `408xx` range or allowlist only
+HK2:
+
+```text
+edge-us2.427357.xyz → 141.11.148.116
+HK2:41881/tcp       → US2:8881/tcp
+HK2:41882/udp       → US2:8882/udp
+HK2:41883/udp       → US2:8883/udp
+HK2:41885/tcp+udp   → US2:8885/tcp+udp
+HK2:41886/tcp       → US2:8886/tcp
+HK2:41889/tcp       → US2:8889/tcp
+HK2:41890/tcp       → US2:8890/tcp
+HK2:41891/tcp       → US2:8891/tcp
+```
+
+The trusted IPv4 set is deliberately limited to HK2 `141.11.148.116`, HK1
+`91.229.132.66`, JP1* `70.36.96.197`, JP2* `152.175.34.230`, and the existing
+CDT backend `47.243.126.59`. Direct client IPv4 traffic to US2 proxy ports is
+dropped; SSH, DNS/NTP, Master/Node traffic, and other ports remain outside the
+table. JP1* is an allowlist source only and is not modified.
+
+The L4 helper refuses local-address, listener, iptables-port, config, and
+service-state preflight failures. It records non-empty CDT/config invariants,
+uses isolated `NEKO_US2EDGE_*` chains, and rolls back only its own rules/unit.
+The ACL helper additionally installs a `sing-box.service` `Requires=` drop-in so
+sing-box cannot start without the US2 ACL after this canary is activated. This
+drop-in is created by the ACL step, not by the earlier L4 step, so the staged
+deployment window remains restart-safe.
