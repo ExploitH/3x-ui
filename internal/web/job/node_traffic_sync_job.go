@@ -60,6 +60,13 @@ type atomicBool struct {
 	v  bool
 }
 
+// Disabled nodes may still represent an active physical data plane. When their
+// remote exposes a per-client sing-box snapshot, poll that source for accounting
+// without treating the node as enabled and without invoking any mutation.
+func shouldPollSingboxAccounting(n *model.Node) bool {
+	return n != nil && !n.Enable
+}
+
 func (a *atomicBool) set() {
 	a.mu.Lock()
 	a.v = true
@@ -113,6 +120,17 @@ func (j *NodeTrafficSyncJob) Run() {
 	var activeMu sync.Mutex
 	var activeEmails []string
 	for _, n := range nodes {
+		if shouldPollSingboxAccounting(n) {
+			wg.Add(1)
+			sem <- struct{}{}
+			n := n
+			common.GoRecover("node-singbox-accounting:"+n.Name, func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				j.syncAccountingOnly(mgr, n)
+			})
+			continue
+		}
 		if !n.Enable || n.Status != "online" {
 			continue
 		}
@@ -351,6 +369,27 @@ func (j *NodeTrafficSyncJob) maybePushGlobals(mgr *runtime.Manager, nodes []*mod
 		})
 	}
 	wg.Wait()
+}
+
+// syncAccountingOnly reads a disabled physical node's optional per-client
+// sing-box source. It deliberately does not run the legacy inbound merge, node
+// reconcile, client-IP sync, global push, or quota mutation path.
+func (j *NodeTrafficSyncJob) syncAccountingOnly(mgr *runtime.Manager, n *model.Node) {
+	rt, err := mgr.RemoteFor(n)
+	if err != nil {
+		logger.Debugf("node sing-box accounting: remote lookup failed for %s: %v", n.Name, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), nodeTrafficSyncRequestTimeout)
+	defer cancel()
+	applied, err := j.inboundService.ApplySingboxTrafficFromRemote(ctx, n.Id, rt)
+	if err != nil {
+		logger.Warningf("node sing-box accounting for disabled node %s failed: %v", n.Name, err)
+		return
+	}
+	if applied {
+		j.structural.set()
+	}
 }
 
 // syncOne pulls one node's traffic snapshot and merges it. It returns the

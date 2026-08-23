@@ -3,8 +3,18 @@ package job
 import (
 	"sync"
 	"testing"
+
+	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 )
 
+func TestAccountingOnlyNodeCandidateIncludesDisabledNodes(t *testing.T) {
+	if shouldPollSingboxAccounting(&model.Node{Enable: true}) {
+		t.Fatal("enabled node must use normal traffic sync")
+	}
+	if !shouldPollSingboxAccounting(&model.Node{Enable: false}) {
+		t.Fatal("disabled node should be eligible for accounting-only polling")
+	}
+}
 func TestAtomicBool_DefaultIsFalse(t *testing.T) {
 	var a atomicBool
 	if a.takeAndReset() {
