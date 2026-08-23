@@ -38,11 +38,20 @@ python3 deploy/cloudflare/cloudflare_hk3_subscription_domain_canary.py rollback 
   --backup /root/neko-vpn-backup-20260823T021528Z-hk3-subscription-domain
 ```
 
-The helper reads the current `STATE_KV` values and changes only HK3 endpoint
-hosts in the five payload formats. It leaves `sub:keys`, credentials, ports,
-queries, labels, protocols, and all non-HK3 entries unchanged. It writes a
-root-only before/candidate manifest and refuses rollback if the live KV values
-have changed since the canary.
+The base helper reads the current `STATE_KV` values and changes only HK3
+endpoint hosts in the five payload formats. The direct-domain stage leaves
+`sub:keys`, credentials, ports, queries, labels, protocols, and all non-HK3
+entries unchanged. The HK2 edge wrapper deliberately maps the three HK3
+service ports as follows:
+
+```text
+8881/tcp → edge-hk3.427357.xyz:38881/tcp
+8882/udp → edge-hk3.427357.xyz:38882/udp
+8883/udp → edge-hk3.427357.xyz:38883/udp
+```
+
+It writes a root-only before/candidate manifest and refuses rollback if the
+live KV values have changed since the canary.
 
 The helper does not enforce SNI/Host, hide the source IP, alter firewall rules,
 modify sing-box, touch JP1* relay nodes, or alter the HK→JP AI path. Current
