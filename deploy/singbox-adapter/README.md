@@ -64,6 +64,10 @@ Environment variables:
 | `SINGBOX_ADAPTER_LISTEN` | `127.0.0.1:23854` |
 | `SINGBOX_ADAPTER_BASE_PATH` | `/adapter/` |
 | `SINGBOX_ADAPTER_V2RAY_API` | empty; disables traffic-readonly mode |
+| `SINGBOX_ADAPTER_MANAGED` | `false`; managed writes are disabled by default |
+| `SINGBOX_ADAPTER_MANAGED_STATE` | `/etc/sing-box/managed/managed-relay-state.json` when explicitly enabled |
+| `SINGBOX_ADAPTER_SINGBOX_BIN` | `/usr/local/bin/sing-box` when explicitly enabled |
+| `SINGBOX_ADAPTER_SINGBOX_SERVICE` | `sing-box.service` when explicitly enabled |
 
 The token file must be mode `0600` or stricter. The adapter reloads the JSON
 configuration for each inbound-list request and rejects malformed configs,

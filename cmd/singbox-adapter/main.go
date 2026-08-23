@@ -26,12 +26,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("read adapter token file: %v", err)
 	}
+	managedMutator, err := managedMutatorFromEnvironment(configPath)
+	if err != nil {
+		log.Fatalf("initialize managed adapter: %v", err)
+	}
 
 	handler, err := singboxadapter.NewReadOnlyHandler(singboxadapter.ReadOnlyOptions{
-		ConfigPath:      configPath,
-		Token:           token,
-		BasePath:        basePath,
-		V2RayAPIAddress: v2rayAPIAddress,
+		ConfigPath:          configPath,
+		Token:               token,
+		BasePath:            basePath,
+		V2RayAPIAddress:     v2rayAPIAddress,
+		ManagedRelayMutator: managedMutator,
 	})
 	if err != nil {
 		log.Fatalf("initialize read-only adapter: %v", err)

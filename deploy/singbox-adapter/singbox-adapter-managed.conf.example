@@ -1,0 +1,12 @@
+# Explicit opt-in only. Do not install this drop-in on JP1* relay nodes.
+# Before enabling on a canary node, back up the sing-box config and canonical
+# state, verify the sing-box service supports reload, and prepare rollback.
+[Service]
+Environment=SINGBOX_ADAPTER_MANAGED=true
+Environment=SINGBOX_ADAPTER_MANAGED_STATE=/etc/sing-box/managed/managed-relay-state.json
+Environment=SINGBOX_ADAPTER_SINGBOX_BIN=/usr/local/bin/sing-box
+Environment=SINGBOX_ADAPTER_SINGBOX_SERVICE=sing-box-hk3.service
+# The base unit is ProtectSystem=strict. Permit only the managed config and
+# canonical state to be replaced; the adapter token remains read-only.
+ReadOnlyPaths=
+ReadWritePaths=/etc/sing-box/config.json /etc/sing-box/managed
