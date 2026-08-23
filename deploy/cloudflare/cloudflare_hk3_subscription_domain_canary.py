@@ -19,6 +19,10 @@ API_ROOT = "https://api.cloudflare.com/client/v4"
 ZONE_NAME = "427357.xyz"
 DOMAIN = "hk3.427357.xyz"
 HOSTS = {"39.109.50.213", "2a0f:1cc6:b240:201::240"}
+TARGET_MARKER = "HK3"
+IPV4_ONLY = False
+CANARY_NAME = "hk3-subscription-domain"
+CANARY_STATUS = "HK3_SUBSCRIPTION_DOMAIN_CANARY"
 # Empty in the direct-domain canary.  The HK2 edge wrapper sets this to the
 # dedicated frontend ports; a non-empty map fails closed on unknown ports.
 PORT_MAP: dict[int, int] = {}
@@ -131,7 +135,8 @@ def label(line: str) -> str:
 
 
 def replace_uri_endpoint(line: str) -> tuple[str, bool]:
-    if "HK3" not in label(line).upper():
+    endpoint_label = label(line)
+    if TARGET_MARKER not in endpoint_label.upper() or (IPV4_ONLY and "IPV4" not in endpoint_label.upper()):
         return line, False
     parsed = urllib.parse.urlsplit(line)
     if parsed.hostname not in HOSTS:
@@ -196,7 +201,7 @@ def clash_candidate(raw: bytes) -> tuple[bytes, int]:
     changed = 0
     for proxy in candidate.get("proxies") or []:
         name = str(proxy.get("name") or "")
-        if "HK3" not in name.upper():
+        if TARGET_MARKER not in name.upper() or (IPV4_ONLY and "IPV4" not in name.upper()):
             continue
         host = str(proxy.get("server") or "")
         if host not in HOSTS:
@@ -237,7 +242,8 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
         if len(old_lines) != len(new_lines):
             raise RuntimeError(f"{fmt} line count changed")
         for old, new in zip(old_lines, new_lines):
-            if "HK3" in label(old).upper():
+            old_label = label(old)
+            if TARGET_MARKER in old_label.upper() and (not IPV4_ONLY or "IPV4" in old_label.upper()):
                 old_u, new_u = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
                 if new_u.hostname != DOMAIN or old_u.hostname not in HOSTS:
                     raise RuntimeError(f"{fmt} HK3 host invariant failed")
@@ -257,7 +263,8 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
     if len(old_proxies) != len(new_proxies):
         raise RuntimeError("Clash proxy count changed")
     for old, new in zip(old_proxies, new_proxies):
-        if "HK3" in str(old.get("name") or "").upper():
+        old_name = str(old.get("name") or "")
+        if TARGET_MARKER in old_name.upper() and (not IPV4_ONLY or "IPV4" in old_name.upper()):
             restored = dict(new)
             restored["server"] = old.get("server")
             if PORT_MAP:
@@ -296,7 +303,7 @@ def apply(token: str, account: str, namespace: str) -> None:
     before = get_values(token, account, namespace)
     after, changes = candidate_values(before)
     validate_candidate(before, after)
-    backup = BACKUP_ROOT / ("neko-vpn-backup-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-hk3-subscription-domain")
+    backup = BACKUP_ROOT / ("neko-vpn-backup-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + CANARY_NAME)
     write_backup(backup, before, after)
     applied: list[str] = []
     try:
@@ -314,7 +321,7 @@ def apply(token: str, account: str, namespace: str) -> None:
                 raise RuntimeError(f"rollback refused because {key} changed after apply failure")
             put_value(token, account, namespace, key, before[key])
         raise
-    print(json.dumps({"status": "HK3_SUBSCRIPTION_DOMAIN_CANARY_APPLIED", "record": DOMAIN, "changes": changes, "backup": str(backup), "changed_keys": applied}, sort_keys=True))
+    print(json.dumps({"status": CANARY_STATUS + "_APPLIED", "record": DOMAIN, "changes": changes, "backup": str(backup), "changed_keys": applied}, sort_keys=True))
 
 
 def rollback(token: str, account: str, namespace: str, backup: pathlib.Path) -> None:
@@ -327,7 +334,7 @@ def rollback(token: str, account: str, namespace: str, backup: pathlib.Path) -> 
     for key in KV_KEYS:
         old = (backup / manifest["keys"][key]["file"]).read_bytes()
         put_value(token, account, namespace, key, old)
-    print(json.dumps({"status": "HK3_SUBSCRIPTION_DOMAIN_CANARY_ROLLBACK_OK", "backup": str(backup)}, sort_keys=True))
+    print(json.dumps({"status": CANARY_STATUS + "_ROLLBACK_OK", "backup": str(backup)}, sort_keys=True))
 
 
 def main() -> int:
@@ -343,7 +350,7 @@ def main() -> int:
     if args.action == "dry-run":
         after, changes = candidate_values(before)
         validate_candidate(before, after)
-        print(json.dumps({"status": "HK3_SUBSCRIPTION_DOMAIN_CANARY_DRY_RUN_OK", "record": DOMAIN, "changes": changes, "changed_keys": [key for key in KV_KEYS if before[key] != after[key]]}, sort_keys=True))
+        print(json.dumps({"status": CANARY_STATUS + "_DRY_RUN_OK", "record": DOMAIN, "changes": changes, "changed_keys": [key for key in KV_KEYS if before[key] != after[key]]}, sort_keys=True))
     elif args.action == "apply":
         apply(token, account, namespace)
     else:

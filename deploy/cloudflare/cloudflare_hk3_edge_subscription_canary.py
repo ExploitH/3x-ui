@@ -17,6 +17,8 @@ spec.loader.exec_module(module)
 # fail-closed backup/rollback semantics remain identical.
 setattr(module, 'HOSTS', {'hk3.427357.xyz'})
 setattr(module, 'DOMAIN', 'edge-hk3.427357.xyz')
+setattr(module, 'TARGET_MARKER', 'HK3')
+setattr(module, 'IPV4_ONLY', False)
 setattr(module, 'PORT_MAP', {8881: 38881, 8882: 38882, 8883: 38883})
 setattr(module, 'STATE', pathlib.Path('/www/projects/vpn-3xui-unification/audit/edge-hk3-subscription-canary-20260823.json'))
 
