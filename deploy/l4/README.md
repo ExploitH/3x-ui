@@ -124,3 +124,26 @@ The ACL helper additionally installs a `sing-box.service` `Requires=` drop-in so
 sing-box cannot start without the US2 ACL after this canary is activated. This
 drop-in is created by the ACL step, not by the earlier L4 step, so the staged
 deployment window remains restart-safe.
+
+## US3 IPv4-only canary
+
+US3 is the second direct US exit. It uses a separate HK2 port range from both
+US2 (`418xx`) and JP3 (`408xx`), and the helper refuses to proceed unless the
+existing US2, JP2 and JP3 edge services remain active:
+
+```text
+edge-us3.427357.xyz → 141.11.148.116
+HK2:42881/tcp       → US3:8881/tcp
+HK2:42882/udp       → US3:8882/udp
+HK2:42883/udp       → US3:8883/udp
+HK2:42885/tcp+udp   → US3:8885/tcp+udp
+HK2:42886/tcp       → US3:8886/tcp
+HK2:42889/tcp       → US3:8889/tcp
+HK2:42890/tcp       → US3:8890/tcp
+HK2:42891/tcp       → US3:8891/tcp
+```
+
+The US3 ACL mirrors the US2 trusted-relay set in its own
+`inet neko_us3_edge_acl_ipv4` table, unit, state directory, and sing-box
+Requires drop-in. US3 IPv6, JP1* and existing relay entries remain outside the
+direct IPv4 selector; JP1* is not modified.
