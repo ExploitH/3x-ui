@@ -147,3 +147,41 @@ The US3 ACL mirrors the US2 trusted-relay set in its own
 `inet neko_us3_edge_acl_ipv4` table, unit, state directory, and sing-box
 Requires drop-in. US3 IPv6, JP1* and existing relay entries remain outside the
 direct IPv4 selector; JP1* is not modified.
+
+## HK1 IPv4 direct + relay canary
+
+HK1 is not a simple exit: it owns the direct HK1 entries, the HK1→US2/US3
+relay entries, CDT forwarding, and the AI Smart-DNS path. Its canary therefore
+fronts both the normal inbounds and the existing relay service through HK2:
+
+```text
+edge-hk1.427357.xyz → 141.11.148.116
+
+HK2:43881/tcp       → HK1:8881/tcp       VLESS Reality
+HK2:43882/udp       → HK1:8882/udp       Hysteria2
+HK2:43883/udp       → HK1:8883/udp       TUIC
+HK2:43886/tcp       → HK1:8886/tcp       Trojan
+HK2:43889/tcp       → HK1:8889/tcp       H2-Reality
+HK2:43890/tcp       → HK1:8890/tcp       gRPC-Reality
+HK2:43891/tcp       → HK1:8891/tcp       AnyTLS
+
+HK2:43892/udp       → HK1:28882/udp      HK1→US2 relay Hy2
+HK2:43893/udp       → HK1:28883/udp      HK1→US2 relay TUIC
+HK2:43894/udp       → HK1:28884/udp      HK1→US3 relay Hy2
+HK2:43895/udp       → HK1:28885/udp      HK1→US3 relay TUIC
+HK2:43896/tcp       → HK1:28886/tcp      HK1→US2 relay Reality
+HK2:43897/tcp       → HK1:28887/tcp      HK1→US3 relay Reality
+```
+
+The HK1 source ACL protects all listed IPv4 direct and relay ports and trusts
+only HK2 `141.11.148.116`. It leaves SSH, local DNS/AI DNS, TCP/80/16606,
+CDT forwarding, outbound HK→JP AI traffic, and the IPv6 path outside this
+IPv4 table. The ACL installs separate `Requires=` drop-ins for both
+`sing-box.service` and `neko-us-relay.service`; it must not be applied as a
+sing-box-only ACL because the relay service has its own config/process.
+
+JP1* remains an immutable exclusion. HK1's live data plane still listens on 8884, but
+this canary deliberately does not enable **Shadowsocks or ShadowTLS**. No `43884/43885` front ports are created, the
+selector excludes `Shadowsocks` and `ShadowTLS` rows, and the HK1 IPv4 ACL
+drops direct TCP/UDP `8884/8885`. The IPv6 rows remain outside this IPv4
+canary and are not claimed as migrated.
