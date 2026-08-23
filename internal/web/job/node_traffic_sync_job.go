@@ -395,6 +395,9 @@ func (j *NodeTrafficSyncJob) syncAccountingOnly(mgr *runtime.Manager, n *model.N
 		logger.Warningf("node sing-box accounting for disabled node %s failed: %v", n.Name, err)
 		return
 	}
+	if quotaErr := j.inboundService.ApplyPendingNodeQuotaBlocksForAccountingNode(ctx, n.Id, rt); quotaErr != nil {
+		logger.Warningf("node sing-box quota mutation for disabled node %s failed: %v", n.Name, quotaErr)
+	}
 	if applied {
 		j.structural.set()
 	}

@@ -456,12 +456,30 @@ func clientNodeRestoreAllowed(db *gorm.DB, record *model.ClientRecord) (bool, er
 	if db == nil || record == nil || !record.Enable {
 		return false, nil
 	}
+	if record.ExpiryTime > 0 && record.ExpiryTime <= time.Now().UnixMilli() {
+		return false, nil
+	}
 	var traffic xray.ClientTraffic
 	if err := db.Where("email = ?", record.Email).Take(&traffic).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, err
+		}
+		// A Master-side canonical client may have no local client_traffics row:
+		// its usage arrives through ClientGlobalTraffic. No global row means no
+		// evidence of global exhaustion, so a node-quota reset may restore it.
+		var global struct {
+			Up   int64
+			Down int64
+		}
+		if err := db.Model(&model.ClientGlobalTraffic{}).
+			Select("COALESCE(MAX(up), 0) AS up, COALESCE(MAX(down), 0) AS down").
+			Where("email = ?", record.Email).Scan(&global).Error; err != nil {
+			return false, err
+		}
+		if record.TotalGB > 0 && global.Up+global.Down >= record.TotalGB {
 			return false, nil
 		}
-		return false, err
+		return true, nil
 	}
 	if !traffic.Enable {
 		return false, nil
