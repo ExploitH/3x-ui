@@ -14,10 +14,10 @@ UNIT=/etc/systemd/system/x-ui.service
 ENV_FILE=/etc/default/x-ui
 DB_DIR=/etc/x-ui
 DB_FILE=$DB_DIR/x-ui.db
-BACKUP=/root/neko-vpn-backup-$(date -u +%Y%m%dT%H%M%SZ)-hk3-master-fe0c9eb0
+BACKUP=/root/neko-vpn-backup-$(date -u +%Y%m%dT%H%M%SZ)-hk3-master-upgrade
 
 [ "$(id -u)" -eq 0 ] || { echo 'must run as root' >&2; exit 1; }
-for c in curl sha256sum tar systemctl install cp mv rm stat awk grep python3; do
+for c in curl sha256sum tar systemctl install cp mv rm stat awk grep python3 find; do
   command -v "$c" >/dev/null || { echo "missing command: $c" >&2; exit 1; }
 done
 [ -x "$BIN" ] && [ -f "$UNIT" ] && [ -f "$ENV_FILE" ] && [ -f "$DB_FILE" ] || {
@@ -38,7 +38,9 @@ curl -fL --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 600 -o "$ARCH
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum -c -
 mkdir -p "$EXTRACT"
 tar -xzf "$ARCHIVE" -C "$EXTRACT"
-RELEASE_DIR="$EXTRACT/hk3-master-fe0c9eb0"
+mapfile -t release_dirs < <(find "$EXTRACT" -mindepth 1 -maxdepth 1 -type d -print)
+[ "${#release_dirs[@]}" -eq 1 ] || { echo 'archive must contain exactly one top-level release directory' >&2; exit 1; }
+RELEASE_DIR="${release_dirs[0]}"
 [ -x "$RELEASE_DIR/x-ui" ] || { echo 'Master binary missing' >&2; exit 1; }
 [ "$(tr -d '[:space:]' < "$RELEASE_DIR/SOURCE_COMMIT")" = "$EXPECTED_COMMIT" ] || {
   echo 'source commit mismatch' >&2
