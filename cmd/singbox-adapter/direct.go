@@ -29,7 +29,7 @@ func directMutatorFromEnvironment(configPath string) (*singboxadapter.DirectInbo
 	mutator := &singboxadapter.DirectInboundMutator{
 		StatePath: statePath, Config: singboxadapter.NewManagedConfigStore(configPath),
 		BinaryPath: binaryPath, InboundTags: tags,
-		Reload: func(ctx context.Context) error { return runSystemctl(ctx, "reload", serviceName) },
+		Reload: func(ctx context.Context) error { return runSystemctl(ctx, "reload-or-restart", serviceName) },
 		Health: func(ctx context.Context) error {
 			if err := singboxCheck(ctx, binaryPath, configPath); err != nil {
 				return err
