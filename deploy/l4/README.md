@@ -48,3 +48,25 @@ rules, so the IPv6 path is not accidentally filtered by the `inet` table.
 
 The HK1 helper uses `NEKO_HK2EDGE_*` chains and never invokes or flushes the
 existing `NEKO_CDT_*` or US-relay chains.
+
+## JP2 IPv4-only canary
+
+JP2 direct IPv4 uses HK2 as the trusted L4 edge. This canary is separate from
+the HK2 and HK3 units/chains:
+
+```text
+edge-jp2.427357.xyz → 141.11.148.116
+HK2:39981/tcp → JP2:8881/tcp
+HK2:39982/udp → JP2:8882/udp
+HK2:39983/udp → JP2:8883/udp
+```
+
+`cloudflare_jp2_edge_subscription_canary.py` changes only JP2 direct IPv4
+rows. It explicitly excludes `JP2*`, JP1/JP1* labels, IPv6 rows, and the JP2
+CPA mixed `20170` surface. `jp2_edge_source_acl_ipv4.sh` uses a separate
+`inet neko_jp2_edge_acl_ipv4` table and explicit IPv4 protocol matches, so the
+JP2 IPv6 path is not claimed or accidentally filtered.
+
+The L4 helper refuses pre-existing generated paths, unit states, or chains,
+uses `NEKO_JP2EDGE_*`, and verifies targeted rollback cleanup without restoring
+the whole iptables snapshot over unrelated concurrent rules.

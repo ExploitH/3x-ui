@@ -21,6 +21,7 @@ DOMAIN = "hk3.427357.xyz"
 HOSTS = {"39.109.50.213", "2a0f:1cc6:b240:201::240"}
 TARGET_MARKER = "HK3"
 IPV4_ONLY = False
+EXCLUDE_LABEL_MARKERS: tuple[str, ...] = ()
 CANARY_NAME = "hk3-subscription-domain"
 CANARY_STATUS = "HK3_SUBSCRIPTION_DOMAIN_CANARY"
 # Empty in the direct-domain canary.  The HK2 edge wrapper sets this to the
@@ -136,7 +137,12 @@ def label(line: str) -> str:
 
 def replace_uri_endpoint(line: str) -> tuple[str, bool]:
     endpoint_label = label(line)
-    if TARGET_MARKER not in endpoint_label.upper() or (IPV4_ONLY and "IPV4" not in endpoint_label.upper()):
+    upper_label = endpoint_label.upper()
+    if (
+        TARGET_MARKER not in upper_label
+        or any(marker.upper() in upper_label for marker in EXCLUDE_LABEL_MARKERS)
+        or (IPV4_ONLY and "IPV4" not in upper_label)
+    ):
         return line, False
     parsed = urllib.parse.urlsplit(line)
     if parsed.hostname not in HOSTS:
@@ -201,7 +207,12 @@ def clash_candidate(raw: bytes) -> tuple[bytes, int]:
     changed = 0
     for proxy in candidate.get("proxies") or []:
         name = str(proxy.get("name") or "")
-        if TARGET_MARKER not in name.upper() or (IPV4_ONLY and "IPV4" not in name.upper()):
+        upper_name = name.upper()
+        if (
+            TARGET_MARKER not in upper_name
+            or any(marker.upper() in upper_name for marker in EXCLUDE_LABEL_MARKERS)
+            or (IPV4_ONLY and "IPV4" not in upper_name)
+        ):
             continue
         host = str(proxy.get("server") or "")
         if host not in HOSTS:
@@ -243,7 +254,12 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
             raise RuntimeError(f"{fmt} line count changed")
         for old, new in zip(old_lines, new_lines):
             old_label = label(old)
-            if TARGET_MARKER in old_label.upper() and (not IPV4_ONLY or "IPV4" in old_label.upper()):
+            upper_label = old_label.upper()
+            if (
+                TARGET_MARKER in upper_label
+                and not any(marker.upper() in upper_label for marker in EXCLUDE_LABEL_MARKERS)
+                and (not IPV4_ONLY or "IPV4" in upper_label)
+            ):
                 old_u, new_u = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
                 if new_u.hostname != DOMAIN or old_u.hostname not in HOSTS:
                     raise RuntimeError(f"{fmt} HK3 host invariant failed")
@@ -264,7 +280,12 @@ def validate_candidate(before: dict[str, bytes], after: dict[str, bytes]) -> Non
         raise RuntimeError("Clash proxy count changed")
     for old, new in zip(old_proxies, new_proxies):
         old_name = str(old.get("name") or "")
-        if TARGET_MARKER in old_name.upper() and (not IPV4_ONLY or "IPV4" in old_name.upper()):
+        upper_name = old_name.upper()
+        if (
+            TARGET_MARKER in upper_name
+            and not any(marker.upper() in upper_name for marker in EXCLUDE_LABEL_MARKERS)
+            and (not IPV4_ONLY or "IPV4" in upper_name)
+        ):
             restored = dict(new)
             restored["server"] = old.get("server")
             if PORT_MAP:
