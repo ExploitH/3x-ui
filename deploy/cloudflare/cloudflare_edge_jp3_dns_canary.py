@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add/rollback the HK2-backed JP2 IPv4 edge DNS canary."""
+"""Add/rollback the HK2-backed JP3 IPv4 edge DNS canary."""
 from __future__ import annotations
 
 import argparse
@@ -15,9 +15,9 @@ import urllib.request
 
 API = 'https://api.cloudflare.com/client/v4'
 ZONE = '427357.xyz'
-NAME = 'edge-jp2.427357.xyz'
+NAME = 'edge-jp3.427357.xyz'
 IP = '141.11.148.116'
-STATE = pathlib.Path('/www/projects/vpn-3xui-unification/audit/edge-jp2-dns-canary-20260823.json')
+STATE = pathlib.Path('/www/projects/vpn-3xui-unification/audit/edge-jp3-dns-canary-20260823.json')
 LOCK = STATE.with_name(STATE.name + '.lock')
 ENV = pathlib.Path('/root/.hermes/secrets/cloudflare.env')
 
@@ -87,12 +87,12 @@ def load_state() -> dict[str, Any] | None:
     try:
         state = json.loads(STATE.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError('JP2 DNS state is unreadable; refusing to continue') from exc
+        raise RuntimeError('JP3 DNS state is unreadable; refusing to continue') from exc
     if state.get('zone') != ZONE or state.get('name') != NAME or state.get('expected') != IP:
-        raise RuntimeError('JP2 DNS state identity mismatch; refusing to continue')
+        raise RuntimeError('JP3 DNS state identity mismatch; refusing to continue')
     created = state.get('created')
     if not isinstance(created, list) or len(created) != 1 or not created[0].get('id'):
-        raise RuntimeError('JP2 DNS state ownership is incomplete; refusing to continue')
+        raise RuntimeError('JP3 DNS state ownership is incomplete; refusing to continue')
     return state
 
 
@@ -106,10 +106,6 @@ def atomic_write_state(state: dict[str, Any]) -> None:
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
-        # The temp file is already 0600 and fully fsynced before the atomic
-        # rename. After os.replace succeeds, the state is committed; post-
-        # rename directory durability is best-effort and must not trigger DNS
-        # deletion, which would leave an orphaned state/ownership mismatch.
         os.replace(tmp_name, STATE)
         try:
             os.chmod(STATE, 0o600)
@@ -144,10 +140,10 @@ def delete_owned(token: str, zone: str, record_id: str) -> bool:
     if current is None:
         return False
     if not owned_record(current):
-        raise RuntimeError('JP2 DNS record ownership changed; refusing deletion')
+        raise RuntimeError('JP3 DNS record ownership changed or record is missing')
     api(token, 'DELETE', f'/zones/{zone}/dns_records/{record_id}')
     if api(token, 'GET', f'/zones/{zone}/dns_records/{record_id}', allow_404=True) is not None:
-        raise RuntimeError('JP2 DNS record still exists after deletion')
+        raise RuntimeError('JP3 DNS record still exists after deletion')
     return True
 
 
@@ -161,28 +157,20 @@ def apply(token: str, account: str) -> int:
             state = load_state()
             assert state is not None
             record_id = str(state['created'][0]['id'])
-            current = api(token, 'GET', f'/zones/{zone}/dns_records/{record_id}', allow_404=True)
-            if owned_record(current):
-                print(json.dumps({'status': 'EDGE_JP2_DNS_CANARY_ALREADY_APPLIED', 'record': NAME}, sort_keys=True))
+            if owned_record(api(token, 'GET', f'/zones/{zone}/dns_records/{record_id}', allow_404=True)):
+                print(json.dumps({'status': 'EDGE_JP3_DNS_CANARY_ALREADY_APPLIED', 'record': NAME}, sort_keys=True))
                 return 0
-            raise RuntimeError('JP2 DNS state exists but its record is not owned/current; refusing apply')
-
-        conflicts = records_for_name(token, zone)
-        if conflicts:
-            raise RuntimeError('existing DNS record(s) for edge-jp2.427357.xyz; refusing to adopt or overwrite')
-
+            raise RuntimeError('JP3 DNS state exists but its record is not owned/current; refusing apply')
+        if records_for_name(token, zone):
+            raise RuntimeError('existing DNS record(s) for edge-jp3.427357.xyz; refusing to adopt or overwrite')
         created = api(token, 'POST', f'/zones/{zone}/dns_records', {
             'type': 'A', 'name': NAME, 'content': IP, 'ttl': 120,
-            'proxied': False, 'comment': 'JP2 IPv4 L4 edge canary',
+            'proxied': False, 'comment': 'JP3 IPv4 L4 edge canary',
         })
         if not owned_record(created):
-            raise RuntimeError('Cloudflare returned a non-owned JP2 DNS record')
-        state = {
-            'zone': ZONE,
-            'name': NAME,
-            'expected': IP,
-            'created': [{'id': created['id'], 'type': created['type'], 'content': created['content'], 'proxied': False}],
-        }
+            raise RuntimeError('Cloudflare returned a non-owned JP3 DNS record')
+        state = {'zone': ZONE, 'name': NAME, 'expected': IP,
+                 'created': [{'id': created['id'], 'type': created['type'], 'content': created['content'], 'proxied': False}]}
         try:
             atomic_write_state(state)
         except Exception as exc:
@@ -191,7 +179,7 @@ def apply(token: str, account: str) -> int:
             except Exception as cleanup_exc:
                 raise RuntimeError('state write failed and DNS cleanup also failed; manual ownership recovery required') from cleanup_exc
             raise RuntimeError('state write failed; newly created DNS record was removed') from exc
-        print(json.dumps({'status': 'EDGE_JP2_DNS_CANARY_APPLIED', 'record': NAME, 'created_count': 1, 'state': str(STATE)}, sort_keys=True))
+        print(json.dumps({'status': 'EDGE_JP3_DNS_CANARY_APPLIED', 'record': NAME, 'created_count': 1, 'state': str(STATE)}, sort_keys=True))
         return 0
 
 
@@ -204,7 +192,7 @@ def rollback(token: str, account: str) -> int:
         assert state is not None
         deleted = delete_owned(token, zone, str(state['created'][0]['id']))
         remove_state()
-        print(json.dumps({'status': 'EDGE_JP2_DNS_CANARY_ROLLBACK_OK', 'deleted_count': int(deleted), 'state_reconciled': not deleted}, sort_keys=True))
+        print(json.dumps({'status': 'EDGE_JP3_DNS_CANARY_ROLLBACK_OK', 'deleted_count': int(deleted), 'state_reconciled': not deleted}, sort_keys=True))
         return 0
 
 

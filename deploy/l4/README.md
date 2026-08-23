@@ -70,3 +70,24 @@ JP2 IPv6 path is not claimed or accidentally filtered.
 The L4 helper refuses pre-existing generated paths, unit states, or chains,
 uses `NEKO_JP2EDGE_*`, and verifies targeted rollback cleanup without restoring
 the whole iptables snapshot over unrelated concurrent rules.
+
+## JP3 IPv4-only canary
+
+JP3 has a separate AI SNI relay on TCP/443. The direct-node canary must not
+touch that path. Only the IPv4 direct sing-box ports are fronted through HK2:
+
+```text
+edge-jp3.427357.xyz → 141.11.148.116
+HK2:40881/tcp → JP3:8881/tcp
+HK2:40882/udp → JP3:8882/udp
+HK2:40883/udp → JP3:8883/udp
+HK2:40885/tcp+udp → JP3:8885/tcp+udp
+HK2:40886/tcp → JP3:8886/tcp
+HK2:40889/tcp → JP3:8889/tcp
+HK2:40890/tcp → JP3:8890/tcp
+HK2:40891/tcp → JP3:8891/tcp
+```
+
+The JP3 ACL explicitly protects TCP `8881,8885,8886,8889,8890,8891` and UDP
+`8882,8883,8885`, while leaving TCP/443 and the AI SNI service outside its
+table. JP3 IPv6, JP1* and all relay entries are outside this canary.
