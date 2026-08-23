@@ -1,6 +1,7 @@
 package job
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -16,6 +17,30 @@ func TestAccountingOnlyNodeCandidateIncludesDisabledNodes(t *testing.T) {
 	}
 }
 
+func TestAccountingOnlyQuotaRunsWhenSnapshotFails(t *testing.T) {
+	var quotaCalls int
+	snapshotErr := errors.New("counter unavailable")
+	quotaErr := errors.New("mutation failed")
+	applied, gotSnapshotErr, gotQuotaErr := runAccountingOnlyPaths(
+		func() (bool, error) { return false, snapshotErr },
+		func() error { quotaCalls++; return quotaErr },
+	)
+	if applied || !errors.Is(gotSnapshotErr, snapshotErr) || !errors.Is(gotQuotaErr, quotaErr) || quotaCalls != 1 {
+		t.Fatalf("applied=%v snapshot=%v quota=%v calls=%d", applied, gotSnapshotErr, gotQuotaErr, quotaCalls)
+	}
+}
+
+func TestAccountingOnlyQuotaRunsWhenSnapshotSucceeds(t *testing.T) {
+	var quotaCalls int
+	applied, snapshotErr, quotaErr := runAccountingOnlyPaths(
+		func() (bool, error) { return true, nil },
+		func() error { quotaCalls++; return nil },
+	)
+	if !applied || snapshotErr != nil || quotaErr != nil || quotaCalls != 1 {
+		t.Fatalf("applied=%v snapshot=%v quota=%v calls=%d", applied, snapshotErr, quotaErr, quotaCalls)
+	}
+}
+
 func TestLocalDepletionRunsOnlyWithNormalNodePolls(t *testing.T) {
 	if shouldRunLocalDepletion(0) {
 		t.Fatal("accounting-only master must not run local depletion")
@@ -24,6 +49,7 @@ func TestLocalDepletionRunsOnlyWithNormalNodePolls(t *testing.T) {
 		t.Fatal("master with a normal online node must run local depletion")
 	}
 }
+
 func TestAtomicBool_DefaultIsFalse(t *testing.T) {
 	var a atomicBool
 	if a.takeAndReset() {

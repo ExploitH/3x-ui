@@ -71,6 +71,16 @@ func shouldRunLocalDepletion(normalNodePolls int) bool {
 	return normalNodePolls > 0
 }
 
+// runAccountingOnlyPaths deliberately runs quota reconciliation even when the
+// optional accounting snapshot is unavailable. Traffic accounting remains
+// fail-closed; a persisted block/reset must not be stranded behind a transient
+// counter-read failure.
+func runAccountingOnlyPaths(snapshot func() (bool, error), quota func() error) (bool, error, error) {
+	applied, snapshotErr := snapshot()
+	quotaErr := quota()
+	return applied, snapshotErr, quotaErr
+}
+
 func (a *atomicBool) set() {
 	a.mu.Lock()
 	a.v = true
@@ -388,14 +398,22 @@ func (j *NodeTrafficSyncJob) syncAccountingOnly(mgr *runtime.Manager, n *model.N
 		logger.Debugf("node sing-box accounting: remote lookup failed for %s: %v", n.Name, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), nodeTrafficSyncRequestTimeout)
-	defer cancel()
-	applied, err := j.inboundService.ApplySingboxTrafficFromRemote(ctx, n.Id, rt)
-	if err != nil {
-		logger.Warningf("node sing-box accounting for disabled node %s failed: %v", n.Name, err)
-		return
+	statsCtx, statsCancel := context.WithTimeout(context.Background(), nodeTrafficSyncRequestTimeout)
+	applied, statsErr, quotaErr := runAccountingOnlyPaths(
+		func() (bool, error) {
+			defer statsCancel()
+			return j.inboundService.ApplySingboxTrafficFromRemote(statsCtx, n.Id, rt)
+		},
+		func() error {
+			quotaCtx, quotaCancel := context.WithTimeout(context.Background(), nodeReconcileTimeout)
+			defer quotaCancel()
+			return j.inboundService.ApplyPendingNodeQuotaBlocksForAccountingNode(quotaCtx, n.Id, rt)
+		},
+	)
+	if statsErr != nil {
+		logger.Warningf("node sing-box accounting for disabled node %s failed: %v", n.Name, statsErr)
 	}
-	if quotaErr := j.inboundService.ApplyPendingNodeQuotaBlocksForAccountingNode(ctx, n.Id, rt); quotaErr != nil {
+	if quotaErr != nil {
 		logger.Warningf("node sing-box quota mutation for disabled node %s failed: %v", n.Name, quotaErr)
 	}
 	if applied {
