@@ -21,7 +21,9 @@ func directTestConfig(t *testing.T) string {
 			map[string]any{"tag": "direct-tuic", "type": "tuic", "listen_port": 8883, "users": []any{
 				map[string]any{"name": "alice@example.com", "uuid": "alice-tuic", "password": "alice-tuic-password"},
 			}},
-			map[string]any{"tag": "unmanaged", "type": "dns", "listen_port": 5353, "users": []any{}},
+			map[string]any{"tag": "unmanaged", "type": "hysteria2", "listen_port": 443, "users": []any{
+				map[string]any{"password": "legacy-password"},
+			}},
 		},
 	}
 	data, err := json.Marshal(cfg)

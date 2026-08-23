@@ -132,7 +132,7 @@ func (m *DirectInboundMutator) loadOrInitializeState(ctx context.Context, cfg ma
 }
 
 func (m *DirectInboundMutator) buildInitialState(cfg map[string]any) (DirectInboundState, error) {
-	inbounds, err := configInbounds(cfg)
+	inbounds, err := configInbounds(cfg, directInboundTagSet(m.InboundTags))
 	if err != nil {
 		return DirectInboundState{}, err
 	}
@@ -193,7 +193,7 @@ func (m *DirectInboundMutator) validateState(cfg map[string]any, state DirectInb
 			}
 		}
 	}
-	inbounds, err := configInbounds(cfg)
+	inbounds, err := configInbounds(cfg, directInboundTagSet(m.InboundTags))
 	if err != nil {
 		return err
 	}
@@ -334,7 +334,17 @@ func cloneDirectState(state DirectInboundState) DirectInboundState {
 	return out
 }
 
-func configInbounds(cfg map[string]any) (map[string]map[string]json.RawMessage, error) {
+func directInboundTagSet(tags []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			out[tag] = struct{}{}
+		}
+	}
+	return out
+}
+
+func configInbounds(cfg map[string]any, requiredTags map[string]struct{}) (map[string]map[string]json.RawMessage, error) {
 	raw, ok := cfg["inbounds"].([]any)
 	if !ok {
 		return nil, errors.New("sing-box config inbounds must be an array")
@@ -363,7 +373,13 @@ func configInbounds(cfg map[string]any) (map[string]map[string]json.RawMessage, 
 			}
 			name = canonicalRelayEmail(name)
 			if name == "" {
-				return nil, fmt.Errorf("inbound %q contains user without name/email", tag)
+				if _, required := requiredTags[tag]; required {
+					return nil, fmt.Errorf("inbound %q contains user without name/email", tag)
+				}
+				// Non-managed inbounds may intentionally use legacy or
+				// protocol-specific anonymous credentials. They are outside
+				// the direct quota state and must not block initialization.
+				continue
 			}
 			encoded, err := json.Marshal(obj)
 			if err != nil {
