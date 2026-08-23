@@ -67,6 +67,10 @@ func shouldPollSingboxAccounting(n *model.Node) bool {
 	return n != nil && !n.Enable
 }
 
+func shouldRunLocalDepletion(normalNodePolls int) bool {
+	return normalNodePolls > 0
+}
+
 func (a *atomicBool) set() {
 	a.mu.Lock()
 	a.v = true
@@ -119,6 +123,7 @@ func (j *NodeTrafficSyncJob) Run() {
 	var wg sync.WaitGroup
 	var activeMu sync.Mutex
 	var activeEmails []string
+	normalNodePolls := 0
 	for _, n := range nodes {
 		if shouldPollSingboxAccounting(n) {
 			wg.Add(1)
@@ -134,6 +139,7 @@ func (j *NodeTrafficSyncJob) Run() {
 		if !n.Enable || n.Status != "online" {
 			continue
 		}
+		normalNodePolls++
 		wg.Add(1)
 		sem <- struct{}{}
 		n := n
@@ -149,20 +155,22 @@ func (j *NodeTrafficSyncJob) Run() {
 	}
 	wg.Wait()
 
-	_, clientsDisabled, err := j.inboundService.AddTraffic(nil, nil)
-	if err != nil {
-		logger.Warning("node traffic sync: depletion check failed:", err)
-	}
-	if clientsDisabled {
-		if restartOnDisable, settingErr := j.settingService.GetRestartXrayOnClientDisable(); settingErr == nil && restartOnDisable {
-			if err := j.xrayService.RestartXray(true); err != nil {
-				logger.Warning("node traffic sync: restart xray after disabling clients failed:", err)
-				j.xrayService.SetToNeedRestart()
-			}
-		} else if settingErr != nil {
-			logger.Warning("node traffic sync: get RestartXrayOnClientDisable failed:", settingErr)
+	if shouldRunLocalDepletion(normalNodePolls) {
+		_, clientsDisabled, err := j.inboundService.AddTraffic(nil, nil)
+		if err != nil {
+			logger.Warning("node traffic sync: depletion check failed:", err)
 		}
-		j.structural.set()
+		if clientsDisabled {
+			if restartOnDisable, settingErr := j.settingService.GetRestartXrayOnClientDisable(); settingErr == nil && restartOnDisable {
+				if err := j.xrayService.RestartXray(true); err != nil {
+					logger.Warning("node traffic sync: restart xray after disabling clients failed:", err)
+					j.xrayService.SetToNeedRestart()
+				}
+			} else if settingErr != nil {
+				logger.Warning("node traffic sync: get RestartXrayOnClientDisable failed:", settingErr)
+			}
+			j.structural.set()
+		}
 	}
 
 	j.maybePushGlobals(mgr, nodes)

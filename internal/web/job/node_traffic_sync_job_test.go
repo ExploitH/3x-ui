@@ -15,6 +15,15 @@ func TestAccountingOnlyNodeCandidateIncludesDisabledNodes(t *testing.T) {
 		t.Fatal("disabled node should be eligible for accounting-only polling")
 	}
 }
+
+func TestLocalDepletionRunsOnlyWithNormalNodePolls(t *testing.T) {
+	if shouldRunLocalDepletion(0) {
+		t.Fatal("accounting-only master must not run local depletion")
+	}
+	if !shouldRunLocalDepletion(1) {
+		t.Fatal("master with a normal online node must run local depletion")
+	}
+}
 func TestAtomicBool_DefaultIsFalse(t *testing.T) {
 	var a atomicBool
 	if a.takeAndReset() {
